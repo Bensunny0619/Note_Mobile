@@ -1,24 +1,89 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+import "../global.css";
+import { Stack } from "expo-router";
+import { AuthProvider } from "../context/AuthContext";
+import { LabelProvider } from '../context/LabelContext';
+import { ThemeProvider } from '../context/ThemeContext';
+import { useAuth } from "../context/AuthContext";
+import { useEffect } from "react";
+import { useRouter, useSegments } from "expo-router";
+import { View, ActivityIndicator, Platform } from "react-native";
+import * as Notifications from 'expo-notifications';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+// Configure how notifications are handled when the app is open
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+// Separate component to handle protection logic since it needs to be inside AuthProvider
+function RootLayoutNav() {
+  const { user, isLoading } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  useEffect(() => {
+    // Request notification permissions
+    async function requestPermissions() {
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status !== 'granted') {
+        await Notifications.requestPermissionsAsync();
+      }
+
+      if (Platform.OS === 'android') {
+        Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#FF231F7C',
+        });
+      }
+    }
+
+    requestPermissions();
+
+    if (isLoading) return;
+
+    const inAuthGroup = segments[0] === '(auth)';
+
+    if (!user && !inAuthGroup) {
+      // Redirect to login if not authenticated
+      router.replace('/(auth)/login');
+    } else if (user && inAuthGroup) {
+      // Redirect to tabs if authenticated
+      router.replace('/(tabs)');
+    }
+  }, [user, segments, isLoading]);
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(auth)" />
+      <Stack.Screen name="notes/create" />
+      <Stack.Screen name="notes/edit/[id]" />
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <AuthProvider>
+      <ThemeProvider>
+        <LabelProvider>
+          <RootLayoutNav />
+        </LabelProvider>
+      </ThemeProvider>
+    </AuthProvider>
   );
 }

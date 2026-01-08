@@ -1,98 +1,844 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+    View,
+    Text,
+    FlatList,
+    TouchableOpacity,
+    ActivityIndicator,
+    RefreshControl,
+    StyleSheet,
+    TextInput,
+    Dimensions,
+    Alert,
+    Share,
+    Modal,
+    TouchableWithoutFeedback,
+    ScrollView,
+    Image as NoteImage
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '../../context/AuthContext';
+import api from '../../services/api';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { useLabels } from '../../context/LabelContext';
+import { useTheme } from '../../context/ThemeContext';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+const { width, height } = Dimensions.get('window');
+const COLUMN_WIDTH = (width - 60) / 2;
 
-export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+type Note = {
+    id: number;
+    title: string;
+    content: string;
+    color: string;
+    created_at: string;
+    is_pinned: boolean;
+    is_archived: boolean;
+    checklist_items: any[];
+    labels: any[];
+    images: any[];
+};
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
-  );
+export default function NotesScreen() {
+    const { user, logout } = useAuth();
+    const [notes, setNotes] = useState<Note[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [selectedLabelId, setSelectedLabelId] = useState<number | null>(null);
+    const [selectedNote, setSelectedNote] = useState<Note | null>(null);
+    const [isMenuVisible, setIsMenuVisible] = useState(false);
+    const { labels: allLabels } = useLabels();
+    const { isDarkMode } = useTheme();
+    const router = useRouter();
+
+    const fetchNotes = useCallback(async () => {
+        try {
+            console.log("--- FETCHING NOTES ---");
+            const response = await api.get('/notes');
+            const fetchedNotes = response.data?.data || (Array.isArray(response.data) ? response.data : []);
+            setNotes(fetchedNotes);
+        } catch (error) {
+            console.error('Error fetching notes:', error);
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchNotes();
+    }, [fetchNotes]);
+
+    const onRefresh = () => {
+        setRefreshing(true);
+        fetchNotes();
+    };
+
+    const handleLongPress = (note: Note) => {
+        setSelectedNote(note);
+        setIsMenuVisible(true);
+    };
+
+    const closeMenu = () => {
+        setIsMenuVisible(false);
+        setSelectedNote(null);
+    };
+
+    const togglePin = async () => {
+        if (!selectedNote) return;
+        const noteId = selectedNote.id;
+        const currentStatus = selectedNote.is_pinned;
+        closeMenu();
+        try {
+            await api.put(`/notes/${noteId}/${currentStatus ? 'unpin' : 'pin'}`);
+            fetchNotes();
+        } catch (error) {
+            Alert.alert('Error', 'Failed to update pin status');
+        }
+    };
+
+    const toggleArchive = async () => {
+        if (!selectedNote) return;
+        const noteId = selectedNote.id;
+        const currentStatus = selectedNote.is_archived;
+        closeMenu();
+        try {
+            await api.put(`/notes/${noteId}/${currentStatus ? 'unarchive' : 'archive'}`);
+            fetchNotes();
+        } catch (error) {
+            Alert.alert('Error', 'Failed to update archive status');
+        }
+    };
+
+    const handleShare = async () => {
+        if (!selectedNote) return;
+        const note = selectedNote;
+        closeMenu();
+        try {
+            let shareMessage = `${note.title}\n\n`;
+            if (note.content) {
+                shareMessage += `${note.content}\n\n`;
+            }
+
+            if (note.checklist_items && note.checklist_items.length > 0) {
+                const checklistText = note.checklist_items
+                    .map((item: any) => `${item.is_completed ? '☑' : '☐'} ${item.text}`)
+                    .join('\n');
+                shareMessage += `Checklist:\n${checklistText}\n\n`;
+            }
+
+            if (note.labels && note.labels.length > 0) {
+                const labelText = note.labels.map((l: any) => `#${l.name}`).join(' ');
+                shareMessage += `Labels: ${labelText}`;
+            }
+
+            await Share.share({
+                message: shareMessage.trim(),
+                title: note.title
+            });
+        } catch (error) {
+            console.error('Share error:', error);
+        }
+    };
+
+    const confirmDelete = () => {
+        if (!selectedNote) return;
+        const noteId = selectedNote.id;
+        closeMenu();
+        Alert.alert(
+            'Delete Note',
+            'Are you sure you want to delete this note?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await api.delete(`/notes/${noteId}`);
+                            fetchNotes();
+                        } catch (error) {
+                            Alert.alert('Error', 'Failed to delete note');
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const filteredNotes = notes.filter(note => {
+        const matchesSearch = (note.title?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (note.content?.toLowerCase().includes(searchQuery.toLowerCase()));
+
+        const matchesLabel = selectedLabelId
+            ? note.labels?.some(l => l.id === selectedLabelId)
+            : true;
+
+        return matchesSearch && matchesLabel;
+    });
+
+    const renderNote = ({ item }: { item: any }) => (
+        <TouchableOpacity
+            style={[
+                styles.noteCard,
+                { backgroundColor: item.color || (isDarkMode ? '#1e293b' : '#FFFFFF') },
+                isDarkMode && styles.noteCardDark
+            ]}
+            onPress={() => router.push(`/notes/edit/${item.id}` as any)}
+            onLongPress={() => handleLongPress(item)}
+            activeOpacity={0.7}
+        >
+            <View style={styles.noteHeaderRow}>
+                <Text style={[styles.noteTitle, isDarkMode && styles.textDark]} numberOfLines={2}>{item.title}</Text>
+                {item.is_pinned && <MaterialCommunityIcons name="pin" size={16} color="#6366f1" style={{ marginLeft: 8 }} />}
+            </View>
+            {item.images?.length > 0 && (
+                <View style={styles.noteImagesPreview}>
+                    {item.images.slice(0, 3).map((img: any) => (
+                        <NoteImage
+                            key={img.id}
+                            source={{ uri: img.image_url }}
+                            style={[
+                                styles.notePreviewImage,
+                                item.images.indexOf(img) === 0 && item.images.length === 1 && { width: '100%', height: 120 }
+                            ]}
+                        />
+                    ))}
+                    {item.images.length > 3 && (
+                        <View style={styles.moreImagesIndicator}>
+                            <Text style={styles.moreImagesText}>+{item.images.length - 3}</Text>
+                        </View>
+                    )}
+                </View>
+            )}
+
+            {item.content ? (
+                <Text style={[styles.noteContent, isDarkMode && styles.textDarkSecondary]} numberOfLines={item.checklist_items?.length > 0 || item.images?.length > 0 ? 2 : 5}>
+                    {item.content}
+                </Text>
+            ) : null}
+
+            {item.checklist_items?.length > 0 && (
+                <View style={styles.checklistPreview}>
+                    {item.checklist_items.slice(0, 3).map((check: any) => (
+                        <View key={check.id} style={styles.previewItem}>
+                            <Feather
+                                name={check.is_completed ? "check-square" : "square"}
+                                size={12}
+                                color={check.is_completed ? "#6366f1" : "#9CA3AF"}
+                            />
+                            <Text
+                                style={[
+                                    styles.previewText,
+                                    isDarkMode && styles.textDarkSecondary,
+                                    check.is_completed && styles.previewTextCompleted
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {check.text}
+                            </Text>
+                        </View>
+                    ))}
+                    {item.checklist_items.length > 3 && (
+                        <Text style={styles.moreItemsText}>+ {item.checklist_items.length - 3} more</Text>
+                    )}
+                </View>
+            )}
+
+            {item.labels?.length > 0 && (
+                <View style={styles.labelPreviewContainer}>
+                    {item.labels.slice(0, 2).map((label: any) => (
+                        <View key={label.id} style={[styles.miniLabelChip, isDarkMode && { backgroundColor: 'rgba(129, 140, 248, 0.1)', borderColor: 'rgba(129, 140, 248, 0.2)' }]}>
+                            <Text style={[styles.miniLabelText, isDarkMode && { color: '#818cf8' }]} numberOfLines={1}>{label.name}</Text>
+                        </View>
+                    ))}
+                    {item.labels.length > 2 && (
+                        <Text style={[styles.miniMoreLabels, isDarkMode && styles.textDarkSecondary]}>+{item.labels.length - 2}</Text>
+                    )}
+                </View>
+            )}
+
+            <View style={styles.noteFooter}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={[styles.noteDate, isDarkMode && styles.textDarkSecondary]}>
+                        {new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </Text>
+                    {item.reminder && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 12 }}>
+                            <Feather name="bell" size={12} color={isDarkMode ? "#818cf8" : "#6366f1"} />
+                            <Text style={[styles.noteDate, { marginLeft: 4, color: isDarkMode ? "#818cf8" : "#6366f1" }]}>
+                                {new Date(item.reminder.remind_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                            </Text>
+                        </View>
+                    )}
+                </View>
+                {item.is_archived && <Feather name="archive" size={14} color={isDarkMode ? "#94a3b8" : "#9CA3AF"} />}
+            </View>
+        </TouchableOpacity>
+    );
+
+    return (
+        <SafeAreaView style={[styles.container, isDarkMode && styles.containerDark]}>
+            {/* Professional Navbar */}
+            <View style={[styles.navbar, isDarkMode && styles.headerDark]}>
+                <View style={styles.navbarLeft}>
+                    <Text style={[styles.navTitle, isDarkMode && styles.textDark]}>Notes</Text>
+                    <Text style={styles.navSubtitle}>{user?.name}</Text>
+                </View>
+                <TouchableOpacity onPress={logout} style={styles.logoutIcon}>
+                    <Feather name="log-out" size={22} color="#EF4444" />
+                </TouchableOpacity>
+            </View>
+
+            {/* Search & Filter Section */}
+            <View style={styles.searchContainer}>
+                <View style={[styles.searchBar, isDarkMode && styles.searchBarDark]}>
+                    <Feather name="search" size={18} color={isDarkMode ? "#9CA3AF" : "#6B7280"} />
+                    <TextInput
+                        style={[styles.searchInput, isDarkMode && styles.textDark]}
+                        placeholder="Search notes..."
+                        placeholderTextColor={isDarkMode ? "#6B7280" : "#9CA3AF"}
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                    />
+                </View>
+
+                {/* Label Filter Bar */}
+                {allLabels.length > 0 && (
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.filterScroll}
+                        contentContainerStyle={styles.filterContent}
+                    >
+                        <TouchableOpacity
+                            style={[
+                                styles.filterChip,
+                                selectedLabelId === null && styles.filterChipActive
+                            ]}
+                            onPress={() => setSelectedLabelId(null)}
+                        >
+                            <Text style={[
+                                styles.filterChipText,
+                                selectedLabelId === null && styles.filterChipTextActive
+                            ]}>All</Text>
+                        </TouchableOpacity>
+
+                        {allLabels.map(label => (
+                            <TouchableOpacity
+                                key={label.id}
+                                style={[
+                                    styles.filterChip,
+                                    selectedLabelId === label.id && styles.filterChipActive
+                                ]}
+                                onPress={() => setSelectedLabelId(label.id)}
+                            >
+                                <Text style={[
+                                    styles.filterChipText,
+                                    selectedLabelId === label.id && styles.filterChipTextActive
+                                ]}>
+                                    {label.name}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                )}
+            </View>
+
+            <View style={styles.content}>
+                {loading && !refreshing ? (
+                    <View style={styles.loaderContainer}>
+                        <ActivityIndicator size="large" color="#6366f1" />
+                    </View>
+                ) : (
+                    <FlatList
+                        data={filteredNotes}
+                        renderItem={renderNote}
+                        keyExtractor={(item) => item.id.toString()}
+                        numColumns={2}
+                        columnWrapperStyle={styles.columnWrapper}
+                        contentContainerStyle={styles.listContainer}
+                        showsVerticalScrollIndicator={false}
+                        refreshControl={
+                            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6366f1" />
+                        }
+                        ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <View style={[styles.emptyIconContainer, isDarkMode && styles.emptyIconContainerDark]}>
+                                    <View style={styles.homaLogoSymbol}>
+                                        <Text style={styles.homaLogoText}>H</Text>
+                                    </View>
+                                </View>
+                                <Text style={[styles.emptyTitle, isDarkMode && styles.textDark]}>Nothing here yet</Text>
+                                <Text style={[styles.emptySubtitle, isDarkMode && styles.textDarkSecondary]}>Tap the + button to create your first note</Text>
+                            </View>
+                        }
+                    />
+                )}
+            </View>
+
+            <TouchableOpacity
+                style={styles.fab}
+                onPress={() => router.push('/notes/create')}
+                activeOpacity={0.8}
+            >
+                <Feather name="plus" size={32} color="white" />
+            </TouchableOpacity>
+
+            {/* Premium Action Menu (Bottom Sheet) */}
+            <Modal
+                visible={isMenuVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={closeMenu}
+            >
+                <TouchableWithoutFeedback onPress={closeMenu}>
+                    <View style={styles.modalOverlay}>
+                        <TouchableWithoutFeedback>
+                            <View style={[styles.menuContent, isDarkMode && styles.menuContentDark]}>
+                                <View style={styles.menuHeader}>
+                                    <View style={[styles.menuHandle, isDarkMode && styles.menuHandleDark]} />
+                                    <Text style={[styles.menuTitle, isDarkMode && styles.textDark]} numberOfLines={1}>
+                                        {selectedNote?.title || 'Note Options'}
+                                    </Text>
+                                </View>
+
+                                <View style={styles.menuOptions}>
+                                    <TouchableOpacity style={styles.menuItem} onPress={togglePin}>
+                                        <View style={[styles.menuIconContainer, { backgroundColor: isDarkMode ? 'rgba(99, 102, 241, 0.1)' : '#EEF2FF' }]}>
+                                            <MaterialCommunityIcons name="pin" size={22} color="#6366f1" />
+                                        </View>
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>
+                                            {selectedNote?.is_pinned ? 'Unpin note' : 'Pin note'}
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={toggleArchive}>
+                                        <View style={[styles.menuIconContainer, { backgroundColor: isDarkMode ? 'rgba(148, 163, 184, 0.1)' : '#F3F4F6' }]}>
+                                            <Feather name="archive" size={20} color={isDarkMode ? "#94a3b8" : "#4B5563"} />
+                                        </View>
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>
+                                            {selectedNote?.is_archived ? 'Remove from archive' : 'Archive note'}
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={handleShare}>
+                                        <View style={[styles.menuIconContainer, { backgroundColor: isDarkMode ? 'rgba(34, 197, 94, 0.1)' : '#F0FDF4' }]}>
+                                            <Feather name="share-2" size={20} color="#22C55E" />
+                                        </View>
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>Share note</Text>
+                                    </TouchableOpacity>
+
+                                    <View style={[styles.menuDivider, isDarkMode && styles.menuDividerDark]} />
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={confirmDelete}>
+                                        <View style={[styles.menuIconContainer, { backgroundColor: '#FEF2F2' }]}>
+                                            <Feather name="trash-2" size={20} color="#EF4444" />
+                                        </View>
+                                        <Text style={[styles.menuItemText, { color: '#EF4444' }]}>Delete note</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+        </SafeAreaView>
+    );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
+    container: {
+        flex: 1,
+        backgroundColor: '#FBFBFF',
+    },
+    containerDark: {
+        backgroundColor: '#0f172a',
+    },
+    headerDark: {
+        borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    },
+    textDark: {
+        color: '#f8fafc',
+    },
+    textDarkSecondary: {
+        color: '#94a3b8',
+    },
+    searchBarDark: {
+        backgroundColor: 'rgba(30, 41, 59, 0.6)',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+    },
+    filterChipDark: {
+        backgroundColor: '#1e293b',
+        borderColor: '#334155',
+    },
+    filterChipActiveDark: {
+        backgroundColor: '#6366f1',
+        borderColor: '#6366f1',
+    },
+    noteCardDark: {
+        backgroundColor: '#1e293b',
+        borderColor: '#334155',
+    },
+    avatarDark: {
+        backgroundColor: '#1e293b',
+    },
+    avatarTextDark: {
+        color: '#818cf8',
+    },
+    emptyIconContainerDark: {
+        backgroundColor: '#1e293b',
+    },
+    menuContentDark: {
+        backgroundColor: '#0f172a',
+    },
+    menuHandleDark: {
+        backgroundColor: '#334155',
+    },
+    menuItemTextDark: {
+        color: '#f8fafc',
+    },
+    menuDividerDark: {
+        backgroundColor: '#1e293b',
+    },
+    navbar: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 24,
+        paddingTop: 16,
+        paddingBottom: 24,
+    },
+    navbarLeft: {
+        flex: 1,
+    },
+    navTitle: {
+        fontSize: 32,
+        fontWeight: '900',
+        color: '#111827',
+        letterSpacing: -0.5,
+    },
+    navSubtitle: {
+        fontSize: 14,
+        color: '#6366f1',
+        fontWeight: '600',
+        marginTop: -2,
+    },
+    logoutIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#FEE2E2',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    searchContainer: {
+        paddingHorizontal: 24,
+        marginBottom: 12,
+    },
+    searchBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        paddingHorizontal: 16,
+        height: 52,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.03,
+        shadowRadius: 10,
+        elevation: 1,
+    },
+    searchInput: {
+        flex: 1,
+        marginLeft: 12,
+        fontSize: 16,
+        color: '#1F2937',
+        fontWeight: '500',
+    },
+    content: {
+        flex: 1,
+    },
+    loaderContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    listContainer: {
+        paddingHorizontal: 20,
+        paddingTop: 16,
+        paddingBottom: 110,
+    },
+    columnWrapper: {
+        justifyContent: 'space-between',
+    },
+    noteCard: {
+        width: COLUMN_WIDTH,
+        padding: 20,
+        borderRadius: 24,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#F3F4F6',
+        shadowColor: '#6366f1',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 12,
+        elevation: 2,
+    },
+    noteHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 10,
+    },
+    noteTitle: {
+        flex: 1,
+        fontSize: 17,
+        fontWeight: '800',
+        color: '#111827',
+        lineHeight: 22,
+    },
+    noteContent: {
+        fontSize: 14,
+        color: '#4B5563',
+        lineHeight: 20,
+        fontWeight: '400',
+    },
+    noteImagesPreview: {
+        flexDirection: 'row',
+        gap: 4,
+        marginBottom: 12,
+        borderRadius: 16,
+        overflow: 'hidden',
+    },
+    notePreviewImage: {
+        flex: 1,
+        height: 80,
+        borderRadius: 8,
+    },
+    moreImagesIndicator: {
+        position: 'absolute',
+        right: 0,
+        bottom: 0,
+        top: 0,
+        width: 30,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    moreImagesText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+    moreItemsText: {
+        fontSize: 10,
+        color: '#9CA3AF',
+        marginTop: 4,
+        fontStyle: 'italic',
+    },
+    filterScroll: {
+        marginTop: 12,
+        marginBottom: 4,
+    },
+    filterContent: {
+        paddingRight: 40,
+    },
+    filterChip: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 12,
+        backgroundColor: '#FFFFFF',
+        marginRight: 8,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    filterChipActive: {
+        backgroundColor: '#6366f1',
+        borderColor: '#6366f1',
+    },
+    filterChipText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#6B7280',
+    },
+    filterChipTextActive: {
+        color: '#FFFFFF',
+    },
+    labelPreviewContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginTop: 10,
+        gap: 4,
+    },
+    miniLabelChip: {
+        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        borderWidth: 0.5,
+        borderColor: 'rgba(99, 102, 241, 0.2)',
+    },
+    miniLabelText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#6366f1',
+    },
+    miniMoreLabels: {
+        fontSize: 10,
+        color: '#9CA3AF',
+        fontWeight: '500',
+    },
+    noteFooter: {
+        marginTop: 16,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-end',
+    },
+    noteDate: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#9CA3AF',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    checklistPreview: {
+        marginTop: 10,
+        gap: 4,
+    },
+    previewItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    previewText: {
+        fontSize: 12,
+        color: '#6B7280',
+        flex: 1,
+    },
+    previewTextCompleted: {
+        textDecorationLine: 'line-through',
+        color: '#D1D5DB',
+    },
+    emptyContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 100,
+    },
+    emptyIconContainer: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: '#EEF2FF',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 24,
+    },
+    homaLogoSymbol: {
+        width: 60,
+        height: 60,
+        borderRadius: 18,
+        backgroundColor: '#6366f1',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transform: [{ rotate: '45deg' }],
+    },
+    homaLogoText: {
+        color: 'white',
+        fontSize: 32,
+        fontWeight: '900',
+        transform: [{ rotate: '-45deg' }],
+    },
+    emptyTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#111827',
+        marginBottom: 10,
+    },
+    emptySubtitle: {
+        fontSize: 16,
+        color: '#6B7280',
+        textAlign: 'center',
+        paddingHorizontal: 40,
+        lineHeight: 22,
+    },
+    fab: {
+        position: 'absolute',
+        right: 24,
+        bottom: 24,
+        width: 68,
+        height: 68,
+        borderRadius: 24,
+        backgroundColor: '#6366f1',
+        alignItems: 'center',
+        justifyContent: 'center',
+        elevation: 10,
+        shadowColor: '#6366f1',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.4,
+        shadowRadius: 16,
+    },
+    // Modal & Menu Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.4)',
+        justifyContent: 'flex-end',
+    },
+    menuContent: {
+        backgroundColor: '#FFFFFF',
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        paddingBottom: 40,
+        maxHeight: height * 0.7,
+    },
+    menuHeader: {
+        alignItems: 'center',
+        paddingTop: 12,
+        paddingBottom: 20,
+    },
+    menuHandle: {
+        width: 40,
+        height: 5,
+        borderRadius: 2.5,
+        backgroundColor: '#E5E7EB',
+        marginBottom: 20,
+    },
+    menuTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#111827',
+        paddingHorizontal: 24,
+    },
+    menuOptions: {
+        paddingHorizontal: 16,
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        borderRadius: 16,
+    },
+    menuIconContainer: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 16,
+    },
+    menuItemText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#374151',
+    },
+    menuDivider: {
+        height: 1,
+        backgroundColor: '#F3F4F6',
+        marginVertical: 8,
+        marginHorizontal: 16,
+    },
 });
