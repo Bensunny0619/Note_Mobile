@@ -15,12 +15,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import api from '../../services/api';
+import * as offlineApi from '../../services/offlineApi';
+import { useNetwork } from '../../context/NetworkContext';
 import { Feather } from '@expo/vector-icons';
 import { useLabels } from '../../context/LabelContext';
 import { useTheme } from '../../context/ThemeContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Notifications from 'expo-notifications';
 import * as ImagePicker from 'expo-image-picker';
+import AudioRecorder from '../../components/AudioRecorder';
+import DrawingCanvas from '../../components/DrawingCanvas';
 
 const COLORS = ['#FFFFFF', '#FECACA', '#FDE68A', '#A7F3D0', '#BFDBFE', '#DDD6FE', '#F5D0FE'];
 
@@ -44,7 +48,10 @@ export default function CreateNote() {
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [selectedImages, setSelectedImages] = useState<string[]>([]);
+    const [audioUri, setAudioUri] = useState<string | null>(null);
+    const [drawingBase64, setDrawingBase64] = useState<string | null>(null);
     const { isDarkMode } = useTheme();
+    const { isOnline } = useNetwork();
     const router = useRouter();
 
     const handleCreate = async () => {
@@ -55,59 +62,28 @@ export default function CreateNote() {
 
         setLoading(true);
         try {
-            // 1. Create the note first
+            // 1. Create the note using offline API
             const notePayload = {
                 title: title || 'Untitled',
                 content,
                 color,
                 label_ids: selectedLabelIds,
                 repeat: repeatFrequency !== 'none' ? repeatFrequency : null,
+                audio_uri: audioUri,
+                drawing_base64: drawingBase64,
             };
 
-            const noteResponse = await api.post('/notes', notePayload);
-            const noteId = noteResponse.data.id;
+            const createdNote = await offlineApi.createNote(notePayload);
+            const noteId = createdNote.id;
 
-            // 1.5 Persist Reminder to Backend if set
-            if (reminderDate) {
-                try {
-                    await api.post(`/notes/${noteId}/reminders`, {
-                        remind_at: reminderDate.toISOString()
-                    });
-                    console.log("Reminder persisted to backend");
-                } catch (remError) {
-                    console.error("Failed to persist reminder:", remError);
-                }
-            }
-
-            // 2. Upload Images if any exist
-            if (selectedImages.length > 0) {
-                console.log("--- UPLOADING IMAGES ---");
-                await Promise.all(selectedImages.map(async (uri) => {
-                    const formData = new FormData();
-                    const filename = uri.split('/').pop();
-                    const match = /\.(\w+)$/.exec(filename || '');
-                    const type = match ? `image/${match[1]}` : `image`;
-
-                    formData.append('image', {
-                        uri,
-                        name: filename,
-                        type,
-                    } as any);
-
-                    try {
-                        await api.post(`/notes/${noteId}/images`, formData, {
-                            headers: {
-                                'Content-Type': 'multipart/form-data',
-                            },
-                        });
-                    } catch (imgError) {
-                        console.error('Failed to upload image:', uri, imgError);
-                    }
-                }));
-            }
-
-            // 3. Schedule Local Notification if reminder is set
+            // 2. Schedule Local Notification if reminder is set
             if (reminderDate && reminderDate > new Date()) {
+                // Queue reminder for backend
+                if (reminderDate) {
+                    await offlineApi.createReminder(noteId, reminderDate.toISOString());
+                }
+
+                // Schedule local notification
                 let trigger: any;
 
                 if (repeatFrequency === 'none') {
@@ -116,7 +92,6 @@ export default function CreateNote() {
                         date: reminderDate
                     };
                 } else {
-                    // Recurring notifications: Omit explicit type for Android Expo Go compatibility
                     trigger = {
                         hour: reminderDate!.getHours(),
                         minute: reminderDate!.getMinutes(),
@@ -138,23 +113,42 @@ export default function CreateNote() {
                 });
             }
 
-            // 4. Add labels if backend doesn't handle them in note create payload
-            if (selectedLabelIds.length > 0) {
-                await Promise.all(selectedLabelIds.map(labelId =>
-                    api.post(`/notes/${noteId}/labels`, { label_id: labelId })
-                ));
+            // 3. Upload Images if any exist
+            if (selectedImages.length > 0) {
+                console.log("--- QUEUING IMAGE UPLOADS ---");
+                for (const uri of selectedImages) {
+                    const formData = new FormData();
+                    const filename = uri.split('/').pop();
+                    const match = /\.(\w+)$/.exec(filename || '');
+                    const type = match ? `image/${match[1]}` : `image`;
+
+                    formData.append('image', {
+                        uri,
+                        name: filename,
+                        type,
+                    } as any);
+
+                    await offlineApi.uploadImage(noteId, formData);
+                }
             }
 
-            // 5. Create checklist items sequentially if any exist
+            // 4. Add labels
+            if (selectedLabelIds.length > 0) {
+                for (const labelId of selectedLabelIds) {
+                    await offlineApi.attachLabel(noteId, labelId);
+                }
+            }
+
+            // 5. Create checklist items
             if (checklistItems.length > 0) {
-                console.log("--- 2. CREATING CHECKLIST ITEMS ---");
+                console.log("--- CREATING CHECKLIST ITEMS ---");
+                // Queue checklist creation via regular API (will be handled by general queue)
                 await Promise.all(checklistItems.map(item =>
                     api.post(`/notes/${noteId}/checklist`, {
                         text: item.content,
                         is_completed: item.is_completed
                     })
                 ));
-                console.log("All checklist items saved");
             }
 
             router.back();
@@ -478,6 +472,26 @@ export default function CreateNote() {
                                 ))}
                             </ScrollView>
                         )}
+
+                        {/* Audio Recording Section */}
+                        <View style={styles.toolRow}>
+                            <Text style={[styles.sectionLabel, isDarkMode && styles.sectionLabelDark]}>Audio Note</Text>
+                        </View>
+                        <AudioRecorder
+                            onAudioRecorded={(uri) => setAudioUri(uri)}
+                            onAudioDeleted={() => setAudioUri(null)}
+                            existingAudioUri={audioUri || undefined}
+                        />
+
+                        {/* Drawing Section */}
+                        <View style={styles.toolRow}>
+                            <Text style={[styles.sectionLabel, isDarkMode && styles.sectionLabelDark]}>Freehand Drawing</Text>
+                        </View>
+                        <DrawingCanvas
+                            onDrawingSaved={(base64) => setDrawingBase64(base64)}
+                            onDrawingDeleted={() => setDrawingBase64(null)}
+                            existingDrawing={drawingBase64 || undefined}
+                        />
 
                         <View style={styles.colorSection}>
                             <Text style={[styles.sectionLabel, isDarkMode && styles.sectionLabelDark]}>Theme</Text>

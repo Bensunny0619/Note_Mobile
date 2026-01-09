@@ -19,6 +19,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
+import * as offlineApi from '../../services/offlineApi';
+import { useNetwork } from '../../context/NetworkContext';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useLabels } from '../../context/LabelContext';
@@ -51,13 +53,13 @@ export default function NotesScreen() {
     const [isMenuVisible, setIsMenuVisible] = useState(false);
     const { labels: allLabels } = useLabels();
     const { isDarkMode } = useTheme();
+    const { isOnline, pendingCount, triggerSync, lastSync } = useNetwork();
     const router = useRouter();
 
     const fetchNotes = useCallback(async () => {
         try {
             console.log("--- FETCHING NOTES ---");
-            const response = await api.get('/notes');
-            const fetchedNotes = response.data?.data || (Array.isArray(response.data) ? response.data : []);
+            const fetchedNotes = await offlineApi.getNotes(searchQuery, selectedLabelId || undefined);
             setNotes(fetchedNotes);
         } catch (error) {
             console.error('Error fetching notes:', error);
@@ -65,11 +67,12 @@ export default function NotesScreen() {
             setLoading(false);
             setRefreshing(false);
         }
-    }, []);
+    }, [searchQuery, selectedLabelId]);
 
     useEffect(() => {
         fetchNotes();
-    }, [fetchNotes]);
+        // lastSync added to trigger refetch on real-time updates or sync completion
+    }, [fetchNotes, lastSync]);
 
     const onRefresh = () => {
         setRefreshing(true);
@@ -157,7 +160,7 @@ export default function NotesScreen() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await api.delete(`/notes/${noteId}`);
+                            await offlineApi.deleteNote(noteId);
                             fetchNotes();
                         } catch (error) {
                             Alert.alert('Error', 'Failed to delete note');
@@ -291,6 +294,26 @@ export default function NotesScreen() {
                     <Feather name="log-out" size={22} color="#EF4444" />
                 </TouchableOpacity>
             </View>
+
+            {/* Offline Banner */}
+            {!isOnline && (
+                <View style={styles.offlineBanner}>
+                    <Feather name="wifi-off" size={16} color="#FFFFFF" />
+                    <Text style={styles.offlineBannerText}>
+                        Offline Mode • Changes will sync when online
+                    </Text>
+                </View>
+            )}
+
+            {/* Sync Status Indicator */}
+            {isOnline && pendingCount > 0 && (
+                <View style={styles.syncBanner}>
+                    <ActivityIndicator size="small" color="#6366f1" />
+                    <Text style={styles.syncBannerText}>
+                        Syncing {pendingCount} change{pendingCount !== 1 ? 's' : ''}...
+                    </Text>
+                </View>
+            )}
 
             {/* Search & Filter Section */}
             <View style={styles.searchContainer}>
@@ -559,6 +582,34 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: '#1F2937',
         fontWeight: '500',
+    },
+    offlineBanner: {
+        backgroundColor: '#EF4444',
+        padding: 8,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 8,
+    },
+    offlineBannerText: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    syncBanner: {
+        backgroundColor: '#EEF2FF',
+        padding: 8,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E7FF',
+    },
+    syncBannerText: {
+        color: '#6366f1',
+        fontSize: 12,
+        fontWeight: '600',
     },
     content: {
         flex: 1,

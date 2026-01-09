@@ -16,6 +16,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import api from '../../../services/api';
+import * as offlineApi from '../../../services/offlineApi';
+import { useNetwork } from '../../../context/NetworkContext';
 import { Feather } from '@expo/vector-icons';
 import { useLabels } from '../../../context/LabelContext';
 import { useTheme } from '../../../context/ThemeContext';
@@ -57,6 +59,7 @@ export default function EditNote() {
     const [selectedImages, setSelectedImages] = useState<NoteImage[]>([]);
     const [deletedImageIds, setDeletedImageIds] = useState<number[]>([]);
     const { isDarkMode } = useTheme();
+    const { isOnline } = useNetwork();
     const router = useRouter();
 
     useEffect(() => {
@@ -65,8 +68,13 @@ export default function EditNote() {
 
     const fetchNote = async () => {
         try {
-            const response = await api.get(`/notes/${id}`);
-            const note = response.data;
+            const note = await offlineApi.getNote(id as string | number);
+            if (!note) {
+                Alert.alert('Error', 'Note not found');
+                router.back();
+                return;
+            }
+
             setTitle(note.title);
             setContent(note.content || '');
             setColor(note.color || '#FFFFFF');
@@ -112,7 +120,8 @@ export default function EditNote() {
 
         setLoading(true);
         try {
-            await api.put(`/notes/${id}`, {
+            // 1. Update note using offline API
+            await offlineApi.updateNote(id as string | number, {
                 title,
                 content,
                 color,
@@ -122,38 +131,24 @@ export default function EditNote() {
 
             // 1.5 Handle Reminder Synchronization
             if (reminderDate) {
-                try {
-                    // updateOrCreate handled by backend POST
-                    await api.post(`/notes/${id}/reminders`, {
-                        remind_at: reminderDate.toISOString()
-                    });
-                    console.log("Reminder synchronized with backend");
-                } catch (remError) {
-                    console.error("Failed to sync reminder:", remError);
-                }
+                await offlineApi.createReminder(id as string | number, reminderDate.toISOString());
             } else if (reminderId) {
-                try {
-                    // If reminder was cleared, delete it from backend
-                    await api.delete(`/reminders/${reminderId}`);
-                    setReminderId(null);
-                    console.log("Reminder deleted from backend");
-                } catch (remError) {
-                    console.error("Failed to delete reminder:", remError);
-                }
+                await offlineApi.deleteReminder(reminderId);
+                setReminderId(null);
             }
 
             // 2. Handle Image Synchronization
             // a. Handle Deletions
             if (deletedImageIds.length > 0) {
-                await Promise.all(deletedImageIds.map(imgId =>
-                    api.delete(`/notes/images/${imgId}`)
-                ));
+                for (const imgId of deletedImageIds) {
+                    await api.delete(`/notes/images/${imgId}`);
+                }
             }
 
             // b. Handle New Uploads (images with string IDs are newly added locally)
             const newImages = selectedImages.filter(img => typeof img.id === 'string');
             if (newImages.length > 0) {
-                await Promise.all(newImages.map(async (img) => {
+                for (const img of newImages) {
                     const formData = new FormData();
                     const filename = img.uri.split('/').pop();
                     const match = /\.(\w+)$/.exec(filename || '');
@@ -165,14 +160,8 @@ export default function EditNote() {
                         type,
                     } as any);
 
-                    try {
-                        await api.post(`/notes/${id}/images`, formData, {
-                            headers: { 'Content-Type': 'multipart/form-data' },
-                        });
-                    } catch (e) {
-                        console.error("Image upload failed in edit:", e);
-                    }
-                }));
+                    await offlineApi.uploadImage(id as string | number, formData);
+                }
             }
 
             // 2. Local Notifications Logic

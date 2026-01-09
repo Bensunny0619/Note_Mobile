@@ -3,6 +3,8 @@ import { Stack } from "expo-router";
 import { AuthProvider } from "../context/AuthContext";
 import { LabelProvider } from '../context/LabelContext';
 import { ThemeProvider } from '../context/ThemeContext';
+import { NetworkProvider } from '../context/NetworkContext';
+import { WebSocketProvider } from '../context/WebSocketContext';
 import { useAuth } from "../context/AuthContext";
 import { useEffect } from "react";
 import { useRouter, useSegments } from "expo-router";
@@ -78,12 +80,16 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <ThemeProvider>
-        <LabelProvider>
-          <RootLayoutNav />
-        </LabelProvider>
-      </ThemeProvider>
-    </AuthProvider>
+    <NetworkProvider>
+      <AuthProvider>
+        <WebSocketProvider>
+          <ThemeProvider>
+            <LabelProvider>
+              <RootLayoutNav />
+            </LabelProvider>
+          </ThemeProvider>
+        </WebSocketProvider>
+      </AuthProvider>
+    </NetworkProvider>
   );
 }
