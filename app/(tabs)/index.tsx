@@ -22,7 +22,7 @@ import api from '../../services/api';
 import * as offlineApi from '../../services/offlineApi';
 import { useNetwork } from '../../context/NetworkContext';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useLabels } from '../../context/LabelContext';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -30,7 +30,7 @@ const { width, height } = Dimensions.get('window');
 const COLUMN_WIDTH = (width - 60) / 2;
 
 type Note = {
-    id: number;
+    id: number | string;
     title: string;
     content: string;
     color: string;
@@ -60,6 +60,8 @@ export default function NotesScreen() {
         try {
             console.log("--- FETCHING NOTES ---");
             const fetchedNotes = await offlineApi.getNotes(searchQuery, selectedLabelId || undefined);
+            console.log(`📋 Fetched ${fetchedNotes.length} notes from cache/server`);
+            // console.log("First note:", fetchedNotes[0]);
             setNotes(fetchedNotes);
         } catch (error) {
             console.error('Error fetching notes:', error);
@@ -73,6 +75,12 @@ export default function NotesScreen() {
         fetchNotes();
         // lastSync added to trigger refetch on real-time updates or sync completion
     }, [fetchNotes, lastSync]);
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchNotes();
+        }, [fetchNotes])
+    );
 
     const onRefresh = () => {
         setRefreshing(true);
@@ -161,6 +169,7 @@ export default function NotesScreen() {
                     onPress: async () => {
                         try {
                             await offlineApi.deleteNote(noteId);
+                            if (isOnline) triggerSync();
                             fetchNotes();
                         } catch (error) {
                             Alert.alert('Error', 'Failed to delete note');

@@ -22,8 +22,8 @@ import { Feather } from '@expo/vector-icons';
 import { useLabels } from '../../../context/LabelContext';
 import { useTheme } from '../../../context/ThemeContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import * as Notifications from 'expo-notifications';
 import * as ImagePicker from 'expo-image-picker';
+
 
 const COLORS = ['#FFFFFF', '#FECACA', '#FDE68A', '#A7F3D0', '#BFDBFE', '#DDD6FE', '#F5D0FE'];
 
@@ -59,7 +59,7 @@ export default function EditNote() {
     const [selectedImages, setSelectedImages] = useState<NoteImage[]>([]);
     const [deletedImageIds, setDeletedImageIds] = useState<number[]>([]);
     const { isDarkMode } = useTheme();
-    const { isOnline } = useNetwork();
+    const { isOnline, triggerSync } = useNetwork();
     const router = useRouter();
 
     useEffect(() => {
@@ -68,7 +68,13 @@ export default function EditNote() {
 
     const fetchNote = async () => {
         try {
-            const note = await offlineApi.getNote(id as string | number);
+            // Handle ID type coercion (Expo Router returns strings)
+            const rawId = Array.isArray(id) ? id[0] : id;
+            const noteId = rawId && !isNaN(Number(rawId)) && !rawId.toString().startsWith('offline_')
+                ? Number(rawId)
+                : rawId;
+
+            const note = await offlineApi.getNote(noteId as string | number);
             if (!note) {
                 Alert.alert('Error', 'Note not found');
                 router.back();
@@ -79,30 +85,47 @@ export default function EditNote() {
             setContent(note.content || '');
             setColor(note.color || '#FFFFFF');
 
-            // Set labels
+            // Reset and Set Labels
             const noteLabelIds = (note.labels || []).map((l: any) => l.id);
             setSelectedLabelIds(noteLabelIds);
             setInitialLabelIds(noteLabelIds);
 
-            setChecklistItems((note.checklist_items || []).map((item: any) => ({
-                ...item,
-                content: item.text // Adapt backend 'text' to frontend 'content'
-            })));
+            // Reset and Set Checklists
+            if (note.checklist_items && note.checklist_items.length > 0) {
+                setChecklistItems(note.checklist_items.map((item: any) => ({
+                    ...item,
+                    content: item.text
+                })));
+            } else {
+                setChecklistItems([]);
+            }
 
+            // Reset and Set Reminder
             if (note.reminder) {
                 setReminderDate(new Date(note.reminder.remind_at));
                 setReminderId(note.reminder.id);
+            } else {
+                setReminderDate(null);
+                setReminderId(null);
             }
+
+            // Reset and Set Repeat
             if (note.repeat) {
                 setRepeatFrequency(note.repeat);
+            } else {
+                setRepeatFrequency('none');
             }
-            if (note.images) {
-                // Map backend image_url to uri and keep the id
+
+            // Reset and Set Images
+            if (note.images && note.images.length > 0) {
                 setSelectedImages(note.images.map((img: any) => ({
                     id: img.id,
                     uri: img.image_url
                 })));
+            } else {
+                setSelectedImages([]);
             }
+
         } catch (error: any) {
             console.error('Error fetching note details:', error);
             Alert.alert('Error', 'Failed to load note details');
@@ -149,22 +172,22 @@ export default function EditNote() {
             const newImages = selectedImages.filter(img => typeof img.id === 'string');
             if (newImages.length > 0) {
                 for (const img of newImages) {
-                    const formData = new FormData();
-                    const filename = img.uri.split('/').pop();
-                    const match = /\.(\w+)$/.exec(filename || '');
-                    const type = match ? `image/${match[1]}` : `image`;
+                    const filename = img.uri.split('/').pop() || 'image.jpg';
+                    const match = /\.(\w+)$/.exec(filename);
+                    const type = match ? `image/${match[1]}` : `image/jpeg`;
 
-                    formData.append('image', {
+                    await offlineApi.uploadImage(id as string | number, {
                         uri: img.uri,
                         name: filename,
                         type,
-                    } as any);
-
-                    await offlineApi.uploadImage(id as string | number, formData);
+                    });
                 }
             }
 
             // 2. Local Notifications Logic
+            // 2. Local Notifications Logic
+            // Disabled for Expo Go compatibility
+            /*
             // Using note ID as identifier so it overwrites accurately
             await Notifications.cancelScheduledNotificationAsync(id.toString());
 
@@ -199,6 +222,7 @@ export default function EditNote() {
                     trigger,
                 });
             }
+            */
 
             // 2. Handle Labels (Add new ones, Remove old ones)
             const labelsToAdd = selectedLabelIds.filter(lid => !initialLabelIds.includes(lid));
@@ -236,6 +260,7 @@ export default function EditNote() {
             }));
 
             console.log("Checklist and Label synchronization complete");
+            if (isOnline) triggerSync();
             router.back();
         } catch (error: any) {
             console.error('Error updating note:', error.response?.data || error.message);
@@ -315,7 +340,9 @@ export default function EditNote() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await api.delete(`/notes/${id}`);
+                            const targetId = Array.isArray(id) ? id[0] : id;
+                            await offlineApi.deleteNote(targetId);
+                            if (isOnline) triggerSync();
                             router.back();
                         } catch (error) {
                             Alert.alert('Error', 'Failed to delete note');
@@ -413,7 +440,7 @@ export default function EditNote() {
                         </View>
                         <TouchableOpacity onPress={async () => {
                             setReminderDate(null);
-                            await Notifications.cancelScheduledNotificationAsync(id.toString());
+                            // await Notifications.cancelScheduledNotificationAsync(id.toString());
                         }}>
                             <Feather name="x" size={16} color="#9CA3AF" />
                         </TouchableOpacity>

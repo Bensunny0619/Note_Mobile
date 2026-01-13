@@ -9,9 +9,8 @@ import { useAuth } from "../context/AuthContext";
 import { useEffect } from "react";
 import { useRouter, useSegments } from "expo-router";
 import { View, ActivityIndicator, Platform } from "react-native";
-import * as Notifications from 'expo-notifications';
-
 // Configure how notifications are handled when the app is open
+/*
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: true,
@@ -20,6 +19,7 @@ Notifications.setNotificationHandler({
     shouldShowList: true,
   }),
 });
+*/
 
 // Separate component to handle protection logic since it needs to be inside AuthProvider
 function RootLayoutNav() {
@@ -29,6 +29,7 @@ function RootLayoutNav() {
 
   useEffect(() => {
     // Request notification permissions
+    /*
     async function requestPermissions() {
       const { status } = await Notifications.getPermissionsAsync();
       if (status !== 'granted') {
@@ -46,6 +47,7 @@ function RootLayoutNav() {
     }
 
     requestPermissions();
+    */
 
     if (isLoading) return;
 

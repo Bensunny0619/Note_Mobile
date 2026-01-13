@@ -1,8 +1,9 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import { router } from 'expo-router';
 
-// const API_URL = 'http://192.168.0.2:8000/api';
-const API_URL = 'http://192.168.1.7:8000/api';
+const API_URL = 'http://192.168.0.2:8000/api';
+// const API_URL = 'http://192.168.1.7:8000/api';
 // const API_URL = 'http://192.168.84.230:8000/api';
 
 const api = axios.create({
@@ -33,9 +34,18 @@ api.interceptors.response.use(
     async (error) => {
         if (error.response?.status === 401) {
             console.log('--- SESSION EXPIRED / UNAUTHENTICATED ---');
+            console.log('🔄 Clearing auth data and redirecting to login...');
+
+            // Clear all authentication data
             await SecureStore.deleteItemAsync('auth_token');
-            // We can't easily clear the AuthContext state from here without a global state 
-            // but clearing the token will force a redirect on the next app load/check.
+            await SecureStore.deleteItemAsync('user_data');
+
+            // Redirect to login screen
+            try {
+                router.replace('/(auth)/login');
+            } catch (navError) {
+                console.error('Navigation error:', navError);
+            }
         }
         return Promise.reject(error);
     }

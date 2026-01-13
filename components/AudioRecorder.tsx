@@ -130,10 +130,12 @@ export default function AudioRecorder({ onAudioRecorded, onAudioDeleted, existin
     React.useEffect(() => {
         return () => {
             if (sound) {
-                sound.unloadAsync();
+                sound.unloadAsync().catch(() => { });
             }
             if (recording) {
-                recording.stopAndUnloadAsync();
+                recording.stopAndUnloadAsync().catch(() => {
+                    // Ignore errors if already unloaded
+                });
             }
         };
     }, [sound, recording]);

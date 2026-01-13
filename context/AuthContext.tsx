@@ -44,7 +44,21 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             if (token && userData) {
                 setToken(token);
                 setUser(JSON.parse(userData));
-                // Verify token validity with backend if needed, or rely on 401 interceptor
+
+                // Verify token is still valid with backend
+                try {
+                    await api.get('/auth/me');
+                    console.log('✅ Token validated successfully');
+                } catch (error: any) {
+                    if (error.response?.status === 401) {
+                        console.log('❌ Token invalid, clearing auth state');
+                        // Token is invalid, clear everything
+                        await SecureStore.deleteItemAsync('auth_token');
+                        await SecureStore.deleteItemAsync('user_data');
+                        setToken(null);
+                        setUser(null);
+                    }
+                }
             }
         } catch (e) {
             console.error('Failed to load auth state', e);
@@ -79,6 +93,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     const logout = async () => {
         try {
+            // Call backend logout endpoint to invalidate token
+            try {
+                await api.post('/auth/logout');
+            } catch (error) {
+                console.log('Backend logout failed, clearing local data anyway');
+            }
+
             await SecureStore.deleteItemAsync('auth_token');
             await SecureStore.deleteItemAsync('user_data');
             setToken(null);

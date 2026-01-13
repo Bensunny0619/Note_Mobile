@@ -9,14 +9,14 @@ export const createEcho = (token: string) => {
     return new Echo({
         broadcaster: 'reverb',
         key: 'reverb_app_key',
-        wsHost: '192.168.1.7',
+        wsHost: '192.168.0.2',
         wsPort: 9000,
         wssPort: 9000,
         forceTLS: false,
         enabledTransports: ['ws', 'wss'],
 
         // Custom Auth Endpoint
-        authEndpoint: 'http://192.168.1.7:8000/api/broadcasting/auth',
+        authEndpoint: 'http://192.168.0.2:8000/api/broadcasting/auth',
         auth: {
             headers: {
                 Authorization: `Bearer ${token}`,

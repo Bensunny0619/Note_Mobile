@@ -17,6 +17,8 @@ import {
     getCachedNoteById,
     enqueueOperation,
     CachedNote,
+    getSyncQueue,
+    setSyncQueue,
 } from './storage';
 
 let isOnlineGlobal = true;
@@ -37,16 +39,38 @@ export const getNotes = async (searchQuery?: string, labelId?: number): Promise<
             const response = await api.get('/notes', { params });
             const notes = response.data.data || response.data;
 
+            console.log(`🌐 Fetched ${notes.length} notes from server`);
+
             // Cache the fresh data
-            const cachedNotes: CachedNote[] = notes.map((note: any) => ({
+            // Cache the fresh data, but preserve locally modified notes
+            const currentCached = await getCachedNotes();
+            const localOnlyNotes = currentCached.filter(n => n.locallyModified);
+
+            const serverNotesMapped: CachedNote[] = notes.map((note: any) => ({
                 id: note.id,
                 data: note,
                 locallyModified: false,
                 lastSyncedAt: new Date().toISOString(),
             }));
-            await setCachedNotes(cachedNotes);
 
-            return notes;
+            // Merge: Start with server notes
+            const mergedNotes = [...serverNotesMapped];
+
+            // Apply local modifications/creations on top
+            localOnlyNotes.forEach(localNote => {
+                const index = mergedNotes.findIndex(n => n.id === localNote.id);
+                if (index !== -1) {
+                    // Replace server version with local version to keep unsynced edits visible
+                    mergedNotes[index] = localNote;
+                } else {
+                    // Append new locally created notes (e.g. offline_xxxx)
+                    mergedNotes.unshift(localNote); // Add to top
+                }
+            });
+
+            await setCachedNotes(mergedNotes);
+
+            return mergedNotes.map(n => n.data);
         } catch (error) {
             console.warn('Failed to fetch notes from server, falling back to cache:', error);
             return getCachedNotesData();
@@ -59,7 +83,10 @@ export const getNotes = async (searchQuery?: string, labelId?: number): Promise<
 
 const getCachedNotesData = async (): Promise<any[]> => {
     const cached = await getCachedNotes();
-    return cached.map(c => c.data);
+    console.log(`💾 Retrieved ${cached.length} notes from cache`);
+    const notes = cached.map(c => c.data);
+    console.log('First cached note:', notes[0]);
+    return notes;
 };
 
 export const getNote = async (id: string | number): Promise<any> => {
@@ -104,7 +131,11 @@ export const createNote = async (payload: any): Promise<any> => {
         reminder: null,
     };
 
+    // Extract valid backend fields and attachments
+    const { audio_uri, drawing_base64, ...noteData } = payload;
+
     // Add to cache immediately (optimistic UI)
+    // localNote already contains full payload (including audio/drawing) for offline view
     await addCachedNote({
         id: tempId,
         data: localNote,
@@ -113,13 +144,36 @@ export const createNote = async (payload: any): Promise<any> => {
 
     console.log('📝 Note created locally:', tempId);
 
+    // 1. Enqueue Note Creation (Sanitized payload)
     // Queue for sync
     await enqueueOperation({
         type: 'CREATE',
         resourceType: 'note',
         resourceId: tempId,
-        payload,
+        payload: noteData,
     });
+
+    // 2. Enqueue Audio Upload if present
+    if (audio_uri) {
+        await enqueueOperation({
+            type: 'CREATE_AUDIO',
+            resourceType: 'audio',
+            resourceId: tempId,
+            payload: { noteId: tempId, audio_uri },
+        });
+        console.log('🎤 Audio upload queued for note:', tempId);
+    }
+
+    // 3. Enqueue Drawing Save if present
+    if (drawing_base64) {
+        await enqueueOperation({
+            type: 'CREATE_DRAWING',
+            resourceType: 'drawing',
+            resourceId: tempId,
+            payload: { noteId: tempId, drawing_base64 },
+        });
+        console.log('✏️ Drawing save queued for note:', tempId);
+    }
 
     return localNote;
 };
@@ -159,6 +213,28 @@ export const deleteNote = async (id: string | number): Promise<void> => {
 
     console.log('🗑️ Note deleted locally:', id);
 
+    const idStr = id.toString();
+    if (idStr.startsWith('offline_')) {
+        // If it's an offline note that was never synced, we MUST remove its pending 
+        // creation logic from the queue (and any attachments) instead of sending DELETE
+        try {
+            const queue = await getSyncQueue();
+            const filteredQueue = queue.filter(op => {
+                const isTargetNote = op.resourceId === id; // Op targeting this note
+                const isRelatedAttachment = op.payload && op.payload.noteId === id; // Op belonging to this note
+                return !isTargetNote && !isRelatedAttachment;
+            });
+
+            if (queue.length !== filteredQueue.length) {
+                await setSyncQueue(filteredQueue);
+                console.log('🧹 Removed pending operations for offline note:', id);
+            }
+        } catch (e) {
+            console.error('Error cleaning up offline note from queue:', e);
+        }
+        return;
+    }
+
     // Queue for sync (only if it's a server ID)
     await enqueueOperation({
         type: 'DELETE',
@@ -169,12 +245,12 @@ export const deleteNote = async (id: string | number): Promise<void> => {
 };
 
 // Image operations
-export const uploadImage = async (noteId: string | number, formData: any): Promise<void> => {
+export const uploadImage = async (noteId: string | number, imageFile: { uri: string; name: string; type: string }): Promise<void> => {
     await enqueueOperation({
         type: 'UPLOAD_IMAGE',
         resourceType: 'image',
         resourceId: noteId,
-        payload: { noteId, formData },
+        payload: { noteId, imageFile },
     });
 
     console.log('📷 Image upload queued for note:', noteId);
@@ -224,4 +300,16 @@ export const detachLabel = async (noteId: string | number, labelId: number): Pro
     });
 
     console.log('🏷️ Label detachment queued:', labelId, 'from note:', noteId);
+};
+
+// Checklist operations
+export const createChecklistItem = async (noteId: string | number, payload: { text: string; is_completed: boolean }): Promise<void> => {
+    await enqueueOperation({
+        type: 'CREATE_CHECKLIST',
+        resourceType: 'checklist',
+        resourceId: noteId,
+        payload: { noteId, ...payload },
+    });
+
+    console.log('✅ Checklist item queued for note:', noteId);
 };

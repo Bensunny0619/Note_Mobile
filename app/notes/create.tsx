@@ -21,7 +21,6 @@ import { Feather } from '@expo/vector-icons';
 import { useLabels } from '../../context/LabelContext';
 import { useTheme } from '../../context/ThemeContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import * as Notifications from 'expo-notifications';
 import * as ImagePicker from 'expo-image-picker';
 import AudioRecorder from '../../components/AudioRecorder';
 import DrawingCanvas from '../../components/DrawingCanvas';
@@ -51,7 +50,7 @@ export default function CreateNote() {
     const [audioUri, setAudioUri] = useState<string | null>(null);
     const [drawingBase64, setDrawingBase64] = useState<string | null>(null);
     const { isDarkMode } = useTheme();
-    const { isOnline } = useNetwork();
+    const { isOnline, triggerSync } = useNetwork();
     const router = useRouter();
 
     const handleCreate = async () => {
@@ -76,59 +75,21 @@ export default function CreateNote() {
             const createdNote = await offlineApi.createNote(notePayload);
             const noteId = createdNote.id;
 
-            // 2. Schedule Local Notification if reminder is set
-            if (reminderDate && reminderDate > new Date()) {
-                // Queue reminder for backend
-                if (reminderDate) {
-                    await offlineApi.createReminder(noteId, reminderDate.toISOString());
-                }
-
-                // Schedule local notification
-                let trigger: any;
-
-                if (repeatFrequency === 'none') {
-                    trigger = {
-                        type: Notifications.SchedulableTriggerInputTypes.DATE,
-                        date: reminderDate
-                    };
-                } else {
-                    trigger = {
-                        hour: reminderDate!.getHours(),
-                        minute: reminderDate!.getMinutes(),
-                        repeats: true,
-                        ...(repeatFrequency === 'weekly' ? { weekday: reminderDate!.getDay() + 1 } : {}),
-                        channelId: 'default',
-                    };
-                }
-
-                await Notifications.scheduleNotificationAsync({
-                    content: {
-                        title: `Reminder: ${title || 'Untitled'}`,
-                        body: content ? (content.substring(0, 50) + (content.length > 50 ? '...' : '')) : 'Time for your note!',
-                        data: { noteId },
-                        categoryIdentifier: 'reminder',
-                        color: '#6366f1',
-                    },
-                    trigger,
-                });
-            }
+            // ... (rest of logic handles extra labels/images if any, though offlineApi now handles most)
 
             // 3. Upload Images if any exist
             if (selectedImages.length > 0) {
                 console.log("--- QUEUING IMAGE UPLOADS ---");
                 for (const uri of selectedImages) {
-                    const formData = new FormData();
-                    const filename = uri.split('/').pop();
-                    const match = /\.(\w+)$/.exec(filename || '');
-                    const type = match ? `image/${match[1]}` : `image`;
+                    const filename = uri.split('/').pop() || 'image.jpg';
+                    const match = /\.(\w+)$/.exec(filename);
+                    const type = match ? `image/${match[1]}` : `image/jpeg`;
 
-                    formData.append('image', {
+                    await offlineApi.uploadImage(noteId, {
                         uri,
                         name: filename,
                         type,
-                    } as any);
-
-                    await offlineApi.uploadImage(noteId, formData);
+                    });
                 }
             }
 
@@ -142,13 +103,18 @@ export default function CreateNote() {
             // 5. Create checklist items
             if (checklistItems.length > 0) {
                 console.log("--- CREATING CHECKLIST ITEMS ---");
-                // Queue checklist creation via regular API (will be handled by general queue)
-                await Promise.all(checklistItems.map(item =>
-                    api.post(`/notes/${noteId}/checklist`, {
+                // Queue checklist creation for later sync (when note gets a real ID)
+                for (const item of checklistItems) {
+                    await offlineApi.createChecklistItem(noteId, {
                         text: item.content,
                         is_completed: item.is_completed
-                    })
-                ));
+                    });
+                }
+            }
+
+            // Trigger sync to process queue immediately
+            if (isOnline) {
+                triggerSync();
             }
 
             router.back();
