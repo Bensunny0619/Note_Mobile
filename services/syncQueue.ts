@@ -150,26 +150,16 @@ const processAudioCreate = async (operation: QueuedOperation): Promise<void> => 
 };
 
 const processDrawingCreate = async (operation: QueuedOperation): Promise<void> => {
-    const { noteId, drawing_base64 } = operation.payload;
+    const { noteId, drawing_uri } = operation.payload;
 
-    // Assuming backend accepts base64 string directly in JSON, 
-    // OR expects a file upload. Given 'drawing_path' in DB, likely file upload.
-    // Converting base64 to file upload requires some trickery or backend support.
-    // If backend supports base64 string in JSON:
-    // await api.post(`/notes/${noteId}/drawings`, { drawing: drawing_base64 });
-
-    // BUT usually drawings are images. Let's try FormData with base64 data uri if supported, 
-    // or just send as JSON 'image' field if backend handles base64 decoding.
-    // Since we don't know backend implementation, we'll try sending as JSON first 
-    // if it's base64, OR constructing a file object if we can.
-
-    // Most robust for "drawing_base64" (which creates an image file on server):
-    // Construct FormData with "data:image/png;base64,..." URI.
+    // drawing_uri is a file URI from ViewShot.capture()
+    // Extract filename from URI
+    const filename = drawing_uri.split('/').pop() || 'drawing.png';
 
     const formData = new FormData();
     formData.append('drawing', {
-        uri: drawing_base64.startsWith('data:') ? drawing_base64 : `data:image/png;base64,${drawing_base64}`,
-        name: 'drawing.png',
+        uri: drawing_uri,
+        name: filename,
         type: 'image/png',
     } as any);
 

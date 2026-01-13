@@ -89,30 +89,45 @@ const getCachedNotesData = async (): Promise<any[]> => {
     return notes;
 };
 
-export const getNote = async (id: string | number): Promise<any> => {
-    if (isOnlineGlobal && typeof id === 'number') {
-        try {
+export const getNote = async (id: string | number): Promise<any | null> => {
+    try {
+        if (isOnlineGlobal) { // Changed from isOnline
             const response = await api.get(`/notes/${id}`);
-            const note = response.data;
 
-            // Update cache
-            await updateCachedNote(id, {
-                id: note.id,
-                data: note,
+            // Cache the fetched note
+            await addCachedNote({
+                id: response.data.id,
+                data: response.data,
                 locallyModified: false,
-                lastSyncedAt: new Date().toISOString(),
             });
 
-            return note;
-        } catch (error) {
-            console.warn('Failed to fetch note from server, falling back to cache:', error);
+            return response.data;
+        } else {
             const cached = await getCachedNoteById(id);
-            return cached?.data || null;
+            return cached ? cached.data : null;
         }
-    } else {
-        console.log('📴 Offline: Loading note from cache');
+    } catch (error) {
+        console.warn('Failed to fetch note from server, falling back to cache:', error); // Changed from console.log
         const cached = await getCachedNoteById(id);
-        return cached?.data || null;
+
+        // If we have a cached note with an offline ID, check if it's been synced
+        if (cached && cached.data && typeof cached.data.id === 'string' && cached.data.id.startsWith('offline_')) {
+            // Check if there's a synced version with a real ID
+            const allCached = await getCachedNotes();
+            const syncedNote = allCached.find(n =>
+                typeof n.data.id === 'number' &&
+                n.data.title === cached.data.title &&
+                n.data.content === cached.data.content &&
+                Math.abs(new Date(n.data.created_at).getTime() - new Date(cached.data.created_at).getTime()) < 5000
+            );
+
+            if (syncedNote) {
+                console.log('🔄 Found synced version of offline note:', cached.data.id, '→', syncedNote.data.id);
+                return syncedNote.data;
+            }
+        }
+
+        return cached ? cached.data : null;
     }
 };
 
@@ -132,7 +147,7 @@ export const createNote = async (payload: any): Promise<any> => {
     };
 
     // Extract valid backend fields and attachments
-    const { audio_uri, drawing_base64, ...noteData } = payload;
+    const { audio_uri, drawing_uri, ...noteData } = payload;
 
     // Add to cache immediately (optimistic UI)
     // localNote already contains full payload (including audio/drawing) for offline view
@@ -165,12 +180,12 @@ export const createNote = async (payload: any): Promise<any> => {
     }
 
     // 3. Enqueue Drawing Save if present
-    if (drawing_base64) {
+    if (drawing_uri) {
         await enqueueOperation({
             type: 'CREATE_DRAWING',
             resourceType: 'drawing',
             resourceId: tempId,
-            payload: { noteId: tempId, drawing_base64 },
+            payload: { noteId: tempId, drawing_uri },
         });
         console.log('✏️ Drawing save queued for note:', tempId);
     }

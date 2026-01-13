@@ -25,6 +25,7 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useLabels } from '../../context/LabelContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useAudio } from '../../context/AudioContext';
 
 const { width, height } = Dimensions.get('window');
 const COLUMN_WIDTH = (width - 60) / 2;
@@ -40,6 +41,9 @@ type Note = {
     checklist_items: any[];
     labels: any[];
     images: any[];
+    audio_recordings: any[];
+    drawings: any[];
+    reminder?: any; // Added missing reminder type
 };
 
 export default function NotesScreen() {
@@ -54,6 +58,7 @@ export default function NotesScreen() {
     const { labels: allLabels } = useLabels();
     const { isDarkMode } = useTheme();
     const { isOnline, pendingCount, triggerSync, lastSync } = useNetwork();
+    const { playAudio, isPlaying, currentUri } = useAudio();
     const router = useRouter();
 
     const fetchNotes = useCallback(async () => {
@@ -191,105 +196,146 @@ export default function NotesScreen() {
         return matchesSearch && matchesLabel;
     });
 
-    const renderNote = ({ item }: { item: any }) => (
-        <TouchableOpacity
-            style={[
-                styles.noteCard,
-                { backgroundColor: item.color || (isDarkMode ? '#1e293b' : '#FFFFFF') },
-                isDarkMode && styles.noteCardDark
-            ]}
-            onPress={() => router.push(`/notes/edit/${item.id}` as any)}
-            onLongPress={() => handleLongPress(item)}
-            activeOpacity={0.7}
-        >
-            <View style={styles.noteHeaderRow}>
-                <Text style={[styles.noteTitle, isDarkMode && styles.textDark]} numberOfLines={2}>{item.title}</Text>
-                {item.is_pinned && <MaterialCommunityIcons name="pin" size={16} color="#6366f1" style={{ marginLeft: 8 }} />}
-            </View>
-            {item.images?.length > 0 && (
-                <View style={styles.noteImagesPreview}>
-                    {item.images.slice(0, 3).map((img: any) => (
-                        <NoteImage
-                            key={img.id}
-                            source={{ uri: img.image_url }}
-                            style={[
-                                styles.notePreviewImage,
-                                item.images.indexOf(img) === 0 && item.images.length === 1 && { width: '100%', height: 120 }
-                            ]}
-                        />
-                    ))}
-                    {item.images.length > 3 && (
-                        <View style={styles.moreImagesIndicator}>
-                            <Text style={styles.moreImagesText}>+{item.images.length - 3}</Text>
-                        </View>
-                    )}
+    const renderNote = ({ item }: { item: any }) => {
+        // Merge images and drawings for preview
+        const allVisuals = [
+            ...(item.images || []).map((img: any) => ({ ...img, uri: img.image_url, type: 'image' })),
+            ...(item.drawings || []).map((drw: any) => ({ ...drw, uri: drw.drawing_url, type: 'drawing', id: `d-${drw.id}` }))
+        ];
+
+        return (
+            <TouchableOpacity
+                style={[
+                    styles.noteCard,
+                    { backgroundColor: item.color || (isDarkMode ? '#1e293b' : '#FFFFFF') },
+                    isDarkMode && styles.noteCardDark
+                ]}
+                onPress={() => router.push(`/notes/edit/${item.id}` as any)}
+                onLongPress={() => handleLongPress(item)}
+                activeOpacity={0.7}
+            >
+                <View style={styles.noteHeaderRow}>
+                    <Text style={[styles.noteTitle, isDarkMode && styles.textDark]} numberOfLines={2}>{item.title}</Text>
+                    {item.is_pinned && <MaterialCommunityIcons name="pin" size={16} color="#6366f1" style={{ marginLeft: 8 }} />}
                 </View>
-            )}
 
-            {item.content ? (
-                <Text style={[styles.noteContent, isDarkMode && styles.textDarkSecondary]} numberOfLines={item.checklist_items?.length > 0 || item.images?.length > 0 ? 2 : 5}>
-                    {item.content}
-                </Text>
-            ) : null}
+                {/* Audio Recordings Preview */}
+                {item.audio_recordings?.length > 0 && (
+                    <View style={styles.audioPreviewContainer}>
+                        {item.audio_recordings.slice(0, 1).map((audio: any) => {
+                            const audioUri = audio.audio_url || audio.file_url || audio.uri;
+                            const isThisPlaying = isPlaying && currentUri === audioUri;
+                            return (
+                                <TouchableOpacity
+                                    key={audio.id}
+                                    style={[styles.audioPill, isDarkMode && styles.audioPillDark]}
+                                    onPress={(e) => {
+                                        e.stopPropagation(); // Prevent opening note
+                                        if (audioUri) playAudio(audioUri, {
+                                            noteId: item.id,
+                                            title: item.title || 'Audio Note',
+                                            duration: audio.duration ? audio.duration * 1000 : undefined
+                                        });
+                                    }}
+                                >
+                                    <Feather name={isThisPlaying ? "pause" : "play"} size={12} color="#6366f1" />
+                                    <Text style={[styles.audioPillText, isDarkMode && { color: '#818cf8' }]}>
+                                        Audio {item.audio_recordings.length > 1 ? `(+${item.audio_recordings.length - 1})` : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                )}
 
-            {item.checklist_items?.length > 0 && (
-                <View style={styles.checklistPreview}>
-                    {item.checklist_items.slice(0, 3).map((check: any) => (
-                        <View key={check.id} style={styles.previewItem}>
-                            <Feather
-                                name={check.is_completed ? "check-square" : "square"}
-                                size={12}
-                                color={check.is_completed ? "#6366f1" : "#9CA3AF"}
-                            />
-                            <Text
+                {/* Visuals (Images + Drawings) */}
+                {allVisuals.length > 0 && (
+                    <View style={styles.noteImagesPreview}>
+                        {allVisuals.slice(0, 3).map((visual: any, index: number) => (
+                            <NoteImage
+                                key={visual.id}
+                                source={{ uri: visual.uri }}
                                 style={[
-                                    styles.previewText,
-                                    isDarkMode && styles.textDarkSecondary,
-                                    check.is_completed && styles.previewTextCompleted
+                                    styles.notePreviewImage,
+                                    index === 0 && allVisuals.length === 1 && { width: '100%', height: 120 },
+                                    visual.type === 'drawing' && { backgroundColor: '#FFFFFF' } // Drawing needs white bg usually
                                 ]}
-                                numberOfLines={1}
-                            >
-                                {check.text}
-                            </Text>
-                        </View>
-                    ))}
-                    {item.checklist_items.length > 3 && (
-                        <Text style={styles.moreItemsText}>+ {item.checklist_items.length - 3} more</Text>
-                    )}
-                </View>
-            )}
+                                resizeMode={visual.type === 'drawing' ? 'contain' : 'cover'}
+                            />
+                        ))}
+                        {allVisuals.length > 3 && (
+                            <View style={styles.moreImagesIndicator}>
+                                <Text style={styles.moreImagesText}>+{allVisuals.length - 3}</Text>
+                            </View>
+                        )}
+                    </View>
+                )}
 
-            {item.labels?.length > 0 && (
-                <View style={styles.labelPreviewContainer}>
-                    {item.labels.slice(0, 2).map((label: any) => (
-                        <View key={label.id} style={[styles.miniLabelChip, isDarkMode && { backgroundColor: 'rgba(129, 140, 248, 0.1)', borderColor: 'rgba(129, 140, 248, 0.2)' }]}>
-                            <Text style={[styles.miniLabelText, isDarkMode && { color: '#818cf8' }]} numberOfLines={1}>{label.name}</Text>
-                        </View>
-                    ))}
-                    {item.labels.length > 2 && (
-                        <Text style={[styles.miniMoreLabels, isDarkMode && styles.textDarkSecondary]}>+{item.labels.length - 2}</Text>
-                    )}
-                </View>
-            )}
-
-            <View style={styles.noteFooter}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={[styles.noteDate, isDarkMode && styles.textDarkSecondary]}>
-                        {new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                {item.content ? (
+                    <Text style={[styles.noteContent, isDarkMode && styles.textDarkSecondary]} numberOfLines={item.checklist_items?.length > 0 || allVisuals.length > 0 ? 2 : 5}>
+                        {item.content}
                     </Text>
-                    {item.reminder && (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 12 }}>
-                            <Feather name="bell" size={12} color={isDarkMode ? "#818cf8" : "#6366f1"} />
-                            <Text style={[styles.noteDate, { marginLeft: 4, color: isDarkMode ? "#818cf8" : "#6366f1" }]}>
-                                {new Date(item.reminder.remind_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-                            </Text>
-                        </View>
-                    )}
+                ) : null}
+
+                {item.checklist_items?.length > 0 && (
+                    <View style={styles.checklistPreview}>
+                        {item.checklist_items.slice(0, 3).map((check: any) => (
+                            <View key={check.id} style={styles.previewItem}>
+                                <Feather
+                                    name={check.is_completed ? "check-square" : "square"}
+                                    size={12}
+                                    color={check.is_completed ? "#6366f1" : "#9CA3AF"}
+                                />
+                                <Text
+                                    style={[
+                                        styles.previewText,
+                                        isDarkMode && styles.textDarkSecondary,
+                                        check.is_completed && styles.previewTextCompleted
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    {check.text}
+                                </Text>
+                            </View>
+                        ))}
+                        {item.checklist_items.length > 3 && (
+                            <Text style={styles.moreItemsText}>+ {item.checklist_items.length - 3} more</Text>
+                        )}
+                    </View>
+                )}
+
+                {item.labels?.length > 0 && (
+                    <View style={styles.labelPreviewContainer}>
+                        {item.labels.slice(0, 2).map((label: any) => (
+                            <View key={label.id} style={[styles.miniLabelChip, isDarkMode && { backgroundColor: 'rgba(129, 140, 248, 0.1)', borderColor: 'rgba(129, 140, 248, 0.2)' }]}>
+                                <Text style={[styles.miniLabelText, isDarkMode && { color: '#818cf8' }]} numberOfLines={1}>{label.name}</Text>
+                            </View>
+                        ))}
+                        {item.labels.length > 2 && (
+                            <Text style={[styles.miniMoreLabels, isDarkMode && styles.textDarkSecondary]}>+{item.labels.length - 2}</Text>
+                        )}
+                    </View>
+                )}
+
+                <View style={styles.noteFooter}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={[styles.noteDate, isDarkMode && styles.textDarkSecondary]}>
+                            {new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        </Text>
+                        {item.reminder && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 12 }}>
+                                <Feather name="bell" size={12} color={isDarkMode ? "#818cf8" : "#6366f1"} />
+                                <Text style={[styles.noteDate, { marginLeft: 4, color: isDarkMode ? "#818cf8" : "#6366f1" }]}>
+                                    {new Date(item.reminder.remind_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                    {item.is_archived && <Feather name="archive" size={14} color={isDarkMode ? "#94a3b8" : "#9CA3AF"} />}
                 </View>
-                {item.is_archived && <Feather name="archive" size={14} color={isDarkMode ? "#94a3b8" : "#9CA3AF"} />}
-            </View>
-        </TouchableOpacity>
-    );
+            </TouchableOpacity>
+        );
+    };
 
     return (
         <SafeAreaView style={[styles.container, isDarkMode && styles.containerDark]}>
@@ -900,5 +946,27 @@ const styles = StyleSheet.create({
         backgroundColor: '#F3F4F6',
         marginVertical: 8,
         marginHorizontal: 16,
+    },
+    audioPreviewContainer: {
+        flexDirection: 'row',
+        marginTop: 6,
+        marginBottom: 2,
+    },
+    audioPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#EEF2FF',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 12,
+        gap: 4,
+    },
+    audioPillDark: {
+        backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    },
+    audioPillText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#6366f1',
     },
 });

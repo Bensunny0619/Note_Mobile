@@ -80,6 +80,11 @@ function RootLayoutNav() {
   );
 }
 
+import { AudioProvider } from '../context/AudioContext';
+import MiniAudioPlayer from '../components/MiniAudioPlayer';
+
+// ... existing code ...
+
 export default function RootLayout() {
   return (
     <NetworkProvider>
@@ -87,7 +92,12 @@ export default function RootLayout() {
         <WebSocketProvider>
           <ThemeProvider>
             <LabelProvider>
-              <RootLayoutNav />
+              <AudioProvider>
+                <View style={{ flex: 1 }}>
+                  <RootLayoutNav />
+                  <MiniAudioPlayer />
+                </View>
+              </AudioProvider>
             </LabelProvider>
           </ThemeProvider>
         </WebSocketProvider>

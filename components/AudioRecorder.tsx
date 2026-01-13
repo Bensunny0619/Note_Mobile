@@ -21,6 +21,16 @@ export default function AudioRecorder({ onAudioRecorded, onAudioDeleted, existin
 
     const startRecording = async () => {
         try {
+            // Clean up any existing recording first
+            if (recording) {
+                try {
+                    await recording.stopAndUnloadAsync();
+                } catch (e) {
+                    console.log('Error cleaning up previous recording:', e);
+                }
+                setRecording(null);
+            }
+
             const permission = await Audio.requestPermissionsAsync();
             if (permission.status !== 'granted') {
                 Alert.alert('Permission Required', 'Please grant microphone permissions to record audio.');
@@ -32,11 +42,11 @@ export default function AudioRecorder({ onAudioRecorded, onAudioDeleted, existin
                 playsInSilentModeIOS: true,
             });
 
-            const { recording } = await Audio.Recording.createAsync(
+            const { recording: newRecording } = await Audio.Recording.createAsync(
                 Audio.RecordingOptionsPresets.HIGH_QUALITY
             );
 
-            setRecording(recording);
+            setRecording(newRecording);
             setIsRecording(true);
             setRecordingDuration(0);
 
@@ -45,7 +55,7 @@ export default function AudioRecorder({ onAudioRecorded, onAudioDeleted, existin
                 setRecordingDuration(prev => prev + 1);
             }, 1000);
 
-            recording.setOnRecordingStatusUpdate((status) => {
+            newRecording.setOnRecordingStatusUpdate((status) => {
                 if (!status.isRecording) {
                     clearInterval(interval);
                 }

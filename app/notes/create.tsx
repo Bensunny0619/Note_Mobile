@@ -48,7 +48,7 @@ export default function CreateNote() {
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [selectedImages, setSelectedImages] = useState<string[]>([]);
     const [audioUri, setAudioUri] = useState<string | null>(null);
-    const [drawingBase64, setDrawingBase64] = useState<string | null>(null);
+    const [drawingUri, setDrawingUri] = useState<string | null>(null);
     const { isDarkMode } = useTheme();
     const { isOnline, triggerSync } = useNetwork();
     const router = useRouter();
@@ -69,7 +69,7 @@ export default function CreateNote() {
                 label_ids: selectedLabelIds,
                 repeat: repeatFrequency !== 'none' ? repeatFrequency : null,
                 audio_uri: audioUri,
-                drawing_base64: drawingBase64,
+                drawing_uri: drawingUri,
             };
 
             const createdNote = await offlineApi.createNote(notePayload);
@@ -454,9 +454,9 @@ export default function CreateNote() {
                             <Text style={[styles.sectionLabel, isDarkMode && styles.sectionLabelDark]}>Freehand Drawing</Text>
                         </View>
                         <DrawingCanvas
-                            onDrawingSaved={(base64) => setDrawingBase64(base64)}
-                            onDrawingDeleted={() => setDrawingBase64(null)}
-                            existingDrawing={drawingBase64 || undefined}
+                            onDrawingSaved={(uri) => setDrawingUri(uri)}
+                            onDrawingDeleted={() => setDrawingUri(null)}
+                            existingDrawing={drawingUri || undefined}
                         />
 
                         <View style={styles.colorSection}>

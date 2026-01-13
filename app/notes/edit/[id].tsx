@@ -18,12 +18,14 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import api from '../../../services/api';
 import * as offlineApi from '../../../services/offlineApi';
 import { useNetwork } from '../../../context/NetworkContext';
+import { useAudio } from '../../../context/AudioContext';
 import { Feather } from '@expo/vector-icons';
 import { useLabels } from '../../../context/LabelContext';
 import { useTheme } from '../../../context/ThemeContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
-
+import AudioRecorder from '../../../components/AudioRecorder';
+import DrawingCanvas from '../../../components/DrawingCanvas';
 
 const COLORS = ['#FFFFFF', '#FECACA', '#FDE68A', '#A7F3D0', '#BFDBFE', '#DDD6FE', '#F5D0FE'];
 
@@ -58,8 +60,15 @@ export default function EditNote() {
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [selectedImages, setSelectedImages] = useState<NoteImage[]>([]);
     const [deletedImageIds, setDeletedImageIds] = useState<number[]>([]);
+    const [audioRecordings, setAudioRecordings] = useState<any[]>([]);
+    const [deletedAudioIds, setDeletedAudioIds] = useState<number[]>([]);
+    const [newAudioUri, setNewAudioUri] = useState<string | null>(null);
+    const [drawings, setDrawings] = useState<any[]>([]);
+    const [deletedDrawingIds, setDeletedDrawingIds] = useState<number[]>([]);
+    const [newDrawingUri, setNewDrawingUri] = useState<string | null>(null);
     const { isDarkMode } = useTheme();
     const { isOnline, triggerSync } = useNetwork();
+    const { playAudio, isPlaying, currentUri } = useAudio();
     const router = useRouter();
 
     useEffect(() => {
@@ -126,6 +135,20 @@ export default function EditNote() {
                 setSelectedImages([]);
             }
 
+            // Reset and Set Audio Recordings
+            if (note.audio_recordings && note.audio_recordings.length > 0) {
+                setAudioRecordings(note.audio_recordings);
+            } else {
+                setAudioRecordings([]);
+            }
+
+            // Reset and Set Drawings
+            if (note.drawings && note.drawings.length > 0) {
+                setDrawings(note.drawings);
+            } else {
+                setDrawings([]);
+            }
+
         } catch (error: any) {
             console.error('Error fetching note details:', error);
             Alert.alert('Error', 'Failed to load note details');
@@ -182,6 +205,56 @@ export default function EditNote() {
                         type,
                     });
                 }
+            }
+
+            // 3. Handle Audio Synchronization
+            // a. Handle Deletions
+            if (deletedAudioIds.length > 0) {
+                for (const audioId of deletedAudioIds) {
+                    await api.delete(`/notes/audio/${audioId}`);
+                }
+            }
+
+            // b. Handle New Upload
+            if (newAudioUri) {
+                const filename = newAudioUri.split('/').pop() || 'recording.m4a';
+                const match = /\.(\w+)$/.exec(filename);
+                const type = match ? `audio/${match[1]}` : `audio/m4a`;
+
+                const formData = new FormData();
+                formData.append('audio', {
+                    uri: newAudioUri,
+                    name: filename,
+                    type,
+                } as any);
+
+                await api.post(`/notes/${id}/audio`, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                });
+            }
+
+            // 4. Handle Drawing Synchronization
+            // a. Handle Deletions
+            if (deletedDrawingIds.length > 0) {
+                for (const drawingId of deletedDrawingIds) {
+                    await api.delete(`/notes/drawings/${drawingId}`);
+                }
+            }
+
+            // b. Handle New Upload
+            if (newDrawingUri) {
+                const filename = newDrawingUri.split('/').pop() || 'drawing.png';
+
+                const formData = new FormData();
+                formData.append('drawing', {
+                    uri: newDrawingUri,
+                    name: filename,
+                    type: 'image/png',
+                } as any);
+
+                await api.post(`/notes/${id}/drawings`, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                });
             }
 
             // 2. Local Notifications Logic
@@ -662,6 +735,96 @@ export default function EditNote() {
                             </ScrollView>
                         )}
 
+                        {/* Audio Recording Section */}
+                        <View style={styles.toolRow}>
+                            <Text style={[styles.sectionLabel, isDarkMode && styles.sectionLabelDark]}>Audio Note</Text>
+                        </View>
+
+                        {/* Display existing audio recordings */}
+                        {audioRecordings.map((audio) => {
+                            const audioUri = audio.audio_url || audio.file_url || audio.uri;
+                            const isThisPlaying = isPlaying && currentUri === audioUri;
+
+                            return (
+                                <View key={audio.id} style={[styles.audioCard, isDarkMode && styles.audioCardDark]}>
+                                    <View style={styles.audioCardHeader}>
+                                        <TouchableOpacity
+                                            style={styles.audioCardIcon}
+                                            onPress={() => {
+                                                if (audioUri) {
+                                                    playAudio(audioUri, {
+                                                        noteId: id as string,
+                                                        title: title || 'Audio Recording',
+                                                        duration: audio.duration ? audio.duration * 1000 : undefined
+                                                    });
+                                                } else {
+                                                    Alert.alert('Error', 'Audio file not found');
+                                                }
+                                            }}
+                                        >
+                                            <Feather name={isThisPlaying ? "pause" : "play"} size={24} color="#6366f1" />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={styles.audioDeleteButton}
+                                            onPress={() => {
+                                                setDeletedAudioIds([...deletedAudioIds, audio.id]);
+                                                setAudioRecordings(audioRecordings.filter(a => a.id !== audio.id));
+                                            }}
+                                        >
+                                            <Feather name="trash-2" size={20} color="#EF4444" />
+                                        </TouchableOpacity>
+                                    </View>
+                                    <Text style={[styles.audioCardLabel, isDarkMode && styles.textDark]}>Audio Recording</Text>
+                                    <Text style={[styles.audioCardDuration, isDarkMode && styles.textDark]}>
+                                        {audio.duration ? `${Math.floor(audio.duration / 60)}:${(audio.duration % 60).toString().padStart(2, '0')}` : 'Unknown duration'}
+                                    </Text>
+                                </View>
+                            );
+                        })}
+
+                        {/* Add new audio if no existing audio or user wants to add more */}
+                        {audioRecordings.length === 0 && !newAudioUri && (
+                            <AudioRecorder
+                                onAudioRecorded={(uri) => setNewAudioUri(uri)}
+                                onAudioDeleted={() => setNewAudioUri(null)}
+                                existingAudioUri={newAudioUri || undefined}
+                            />
+                        )}
+
+                        {/* Drawing Section */}
+                        <View style={styles.toolRow}>
+                            <Text style={[styles.sectionLabel, isDarkMode && styles.sectionLabelDark]}>Freehand Drawing</Text>
+                        </View>
+
+                        {/* Display existing drawings */}
+                        {drawings.map((drawing) => (
+                            <View key={drawing.id} style={[styles.drawingCard, isDarkMode && styles.drawingCardDark]}>
+                                <TouchableOpacity
+                                    style={styles.drawingDeleteButton}
+                                    onPress={() => {
+                                        setDeletedDrawingIds([...deletedDrawingIds, drawing.id]);
+                                        setDrawings(drawings.filter(d => d.id !== drawing.id));
+                                    }}
+                                >
+                                    <Feather name="x-circle" size={24} color="#EF4444" />
+                                </TouchableOpacity>
+                                <Image
+                                    source={{ uri: drawing.drawing_url }}
+                                    style={styles.drawingCardImage}
+                                    resizeMode="contain"
+                                />
+                            </View>
+                        ))}
+
+                        {/* Add new drawing if no existing drawing or user wants to add more */}
+                        {drawings.length === 0 && !newDrawingUri && (
+                            <DrawingCanvas
+                                onDrawingSaved={(uri) => setNewDrawingUri(uri)}
+                                onDrawingDeleted={() => setNewDrawingUri(null)}
+                                existingDrawing={newDrawingUri || undefined}
+                            />
+                        )}
+
                         <View style={styles.colorSection}>
                             <Text style={[styles.sectionLabel, isDarkMode && styles.sectionLabelDark]}>Theme</Text>
                             <View style={styles.colorList}>
@@ -1031,5 +1194,117 @@ const styles = StyleSheet.create({
     },
     repeatChipTextActive: {
         color: '#FFFFFF',
+    },
+    audioCard: {
+        backgroundColor: '#F9FAFB',
+        borderRadius: 16,
+        padding: 20,
+        marginBottom: 16,
+        minHeight: 150,
+    },
+    audioCardDark: {
+        backgroundColor: '#1e293b',
+    },
+    audioCardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 16,
+    },
+    audioCardIcon: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: '#EEF2FF',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    audioDeleteButton: {
+        padding: 8,
+    },
+    audioCardLabel: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#374151',
+        marginBottom: 4,
+    },
+    audioCardDuration: {
+        fontSize: 14,
+        color: '#9CA3AF',
+    },
+    drawingCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        overflow: 'hidden',
+        marginBottom: 16,
+        position: 'relative',
+    },
+    drawingCardDark: {
+        backgroundColor: '#1e293b',
+    },
+    drawingCardImage: {
+        width: '100%',
+        height: 400,
+        backgroundColor: '#F9FAFB',
+    },
+    drawingDeleteButton: {
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        zIndex: 10,
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        borderRadius: 20,
+        padding: 4,
+    },
+    // Legacy styles (keeping for compatibility)
+    audioPlayer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F9FAFB',
+        padding: 12,
+        borderRadius: 12,
+        gap: 12,
+        marginBottom: 12,
+    },
+    audioPlayerDark: {
+        backgroundColor: '#1e293b',
+    },
+    audioInfo: {
+        flex: 1,
+    },
+    audioLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#374151',
+        marginBottom: 2,
+    },
+    audioDuration: {
+        fontSize: 12,
+        color: '#9CA3AF',
+    },
+    drawingPreview: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F9FAFB',
+        padding: 12,
+        borderRadius: 12,
+        gap: 12,
+        marginBottom: 12,
+    },
+    drawingPreviewDark: {
+        backgroundColor: '#1e293b',
+    },
+    drawingThumbnail: {
+        width: 60,
+        height: 60,
+        borderRadius: 8,
+    },
+    drawingInfo: {
+        flex: 1,
+    },
+    drawingLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#374151',
     },
 });

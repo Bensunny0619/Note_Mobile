@@ -1,228 +1,207 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, Dimensions, PanResponder } from 'react-native';
-import { Svg, Path } from 'react-native-svg';
+import React, { useState, useRef, forwardRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, Dimensions, ActivityIndicator } from 'react-native';
+import SignatureScreen, { SignatureViewRef } from 'react-native-signature-canvas';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
+import * as FileSystem from 'expo-file-system/legacy';
 
 type DrawingCanvasProps = {
-    onDrawingSaved: (svgData: string) => void;
+    onDrawingSaved: (imageUri: string) => void;
     onDrawingDeleted?: () => void;
     existingDrawing?: string;
 };
 
-const DRAWING_COLORS = [
-    '#000000', // Black
-    '#EF4444', // Red
-    '#3B82F6', // Blue
-    '#10B981', // Green
-    '#F59E0B', // Yellow
-    '#8B5CF6', // Purple
-    '#EC4899', // Pink
-];
-
-type PathData = {
-    path: string;
-    color: string;
-    strokeWidth: number;
-};
+const COLORS = ['#000000', '#EF4444', '#3B82F6', '#10B981', '#F59E0B', '#8B5CF6'];
+const BRUSH_SIZES = [2, 4, 6, 8];
 
 export default function DrawingCanvas({ onDrawingSaved, onDrawingDeleted, existingDrawing }: DrawingCanvasProps) {
     const { isDarkMode } = useTheme();
+    const signatureRef = useRef<SignatureViewRef>(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [hasDrawing, setHasDrawing] = useState(!!existingDrawing);
     const [selectedColor, setSelectedColor] = useState('#000000');
-    const [brushSize, setBrushSize] = useState(3);
-    const [paths, setPaths] = useState<PathData[]>([]);
-    const [currentPath, setCurrentPath] = useState<string>('');
+    const [brushSize, setBrushSize] = useState(4);
+    const [saving, setSaving] = useState(false);
 
-    const panResponder = PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: (evt) => {
-            const { locationX, locationY } = evt.nativeEvent;
-            setCurrentPath(`M${locationX},${locationY}`);
-        },
-        onPanResponderMove: (evt) => {
-            const { locationX, locationY } = evt.nativeEvent;
-            setCurrentPath((prev) => `${prev} L${locationX},${locationY}`);
-        },
-        onPanResponderRelease: () => {
-            if (currentPath) {
-                setPaths([...paths, { path: currentPath, color: selectedColor, strokeWidth: brushSize }]);
-                setCurrentPath('');
-            }
-        },
-    });
+    // Initial style for the webview canvas
+    const webStyle = `
+        .m-signature-pad { 
+            box-shadow: none; 
+            border: none; 
+            background-color: transparent;
+        } 
+        .m-signature-pad--body {
+            border: none;
+        }
+        .m-signature-pad--footer {
+            display: none; 
+            margin: 0px;
+        }
+        body,html { 
+            width: 100%; height: 100%; 
+            background-color: #ffffff;
+        }
+    `;
 
-    const openDrawingModal = () => {
-        setIsDrawing(true);
+    const handleOK = async (signature: string) => {
+        try {
+            setSaving(true);
+            // signature is a base64 string (data:image/png;base64,...)
+            // Remove the prefix
+            const base64Code = signature.replace('data:image/png;base64,', '');
+
+            // Create a temporary file path
+            const filename = `${FileSystem.cacheDirectory}drawing_${Date.now()}.png`;
+
+            // Write to file
+            await FileSystem.writeAsStringAsync(filename, base64Code, {
+                encoding: 'base64',
+            });
+
+            onDrawingSaved(filename);
+            setHasDrawing(true);
+            setIsDrawing(false);
+        } catch (error) {
+            console.error('Error saving drawing:', error);
+        } finally {
+            setSaving(false);
+        }
     };
 
-    const closeDrawingModal = () => {
-        setIsDrawing(false);
+    const handleClear = () => {
+        signatureRef.current?.clearSignature();
     };
 
-    const saveDrawing = () => {
-        // Convert paths to SVG string
-        const svgData = JSON.stringify(paths);
-        onDrawingSaved(svgData);
-        setHasDrawing(true);
-        closeDrawingModal();
+    const handleUndo = () => {
+        signatureRef.current?.undo();
     };
 
-    const clearCanvas = () => {
-        setPaths([]);
-        setCurrentPath('');
+    const handleSave = () => {
+        signatureRef.current?.readSignature();
     };
 
-    const undoLastStroke = () => {
-        setPaths(paths.slice(0, -1));
+    const changeColor = (color: string) => {
+        setSelectedColor(color);
+        signatureRef.current?.changePenColor(color);
+    };
+
+    const changeSize = (size: number) => {
+        setBrushSize(size);
+        signatureRef.current?.changePenSize(size, size);
     };
 
     const deleteDrawing = () => {
         setHasDrawing(false);
-        setPaths([]);
-        setCurrentPath('');
-        if (onDrawingDeleted) {
-            onDrawingDeleted();
-        }
+        onDrawingDeleted?.();
     };
 
-    return (
-        <View style={styles.container}>
-            {!hasDrawing ? (
-                <TouchableOpacity
-                    style={[styles.openButton, isDarkMode && styles.buttonDark]}
-                    onPress={openDrawingModal}
-                >
+    if (hasDrawing && !isDrawing) {
+        return (
+            <View style={styles.container}>
+                <View style={[styles.preview, isDarkMode && styles.previewDark]}>
                     <Feather name="edit-3" size={20} color="#6366f1" />
-                    <Text style={styles.openButtonText}>Create Drawing</Text>
-                </TouchableOpacity>
-            ) : (
-                <View style={[styles.drawingPreview, isDarkMode && styles.drawingPreviewDark]}>
-                    <Feather name="image" size={24} color="#6366f1" />
-                    <View style={styles.drawingInfo}>
-                        <Text style={[styles.drawingLabel, isDarkMode && styles.textDark]}>Drawing Attached</Text>
-                        <TouchableOpacity onPress={openDrawingModal}>
-                            <Text style={styles.editText}>Edit</Text>
-                        </TouchableOpacity>
-                    </View>
+                    <Text style={[styles.previewText, isDarkMode && styles.textDark]}>Drawing attached</Text>
+                    <TouchableOpacity onPress={() => setIsDrawing(true)} style={styles.editBtn}>
+                        <Text style={styles.editText}>Edit</Text>
+                    </TouchableOpacity>
                     <TouchableOpacity onPress={deleteDrawing}>
                         <Feather name="trash-2" size={20} color="#EF4444" />
                     </TouchableOpacity>
                 </View>
-            )}
+            </View>
+        );
+    }
 
-            <Modal
-                visible={isDrawing}
-                animationType="slide"
-                onRequestClose={closeDrawingModal}
-            >
-                <View style={[styles.modalContainer, isDarkMode && styles.modalContainerDark]}>
-                    {/* Header */}
-                    <View style={[styles.header, isDarkMode && styles.headerDark]}>
-                        <TouchableOpacity onPress={closeDrawingModal}>
-                            <Feather name="x" size={24} color={isDarkMode ? "#f8fafc" : "#374151"} />
-                        </TouchableOpacity>
-                        <Text style={[styles.headerTitle, isDarkMode && styles.textDark]}>Draw</Text>
-                        <TouchableOpacity onPress={saveDrawing} style={styles.saveButton}>
-                            <Text style={styles.saveButtonText}>Save</Text>
-                        </TouchableOpacity>
+    if (!isDrawing) {
+        return (
+            <View style={styles.container}>
+                <TouchableOpacity style={styles.openBtn} onPress={() => setIsDrawing(true)}>
+                    <Feather name="edit-3" size={20} color="#6366f1" />
+                    <Text style={styles.openBtnText}>Add Drawing</Text>
+                </TouchableOpacity>
+            </View>
+        );
+    }
+
+    return (
+        <Modal visible={isDrawing} animationType="slide" onRequestClose={() => setIsDrawing(false)}>
+            <View style={[styles.modal, isDarkMode && styles.modalDark]}>
+                {/* Header */}
+                <View style={[styles.header, isDarkMode && styles.headerDark]}>
+                    <TouchableOpacity onPress={() => setIsDrawing(false)}>
+                        <Feather name="x" size={24} color={isDarkMode ? '#fff' : '#000'} />
+                    </TouchableOpacity>
+                    <Text style={[styles.title, isDarkMode && styles.titleDark]}>Draw</Text>
+                    <TouchableOpacity onPress={handleSave} style={styles.saveBtn} disabled={saving}>
+                        {saving ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                            <Text style={styles.saveBtnText}>Done</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+
+                {/* Canvas */}
+                <View style={styles.canvasWrapper}>
+                    <SignatureScreen
+                        ref={signatureRef}
+                        onOK={handleOK}
+                        webStyle={webStyle}
+                        descriptionText="Sign"
+                        clearText="Clear"
+                        confirmText="Save"
+                        minWidth={brushSize}
+                        maxWidth={brushSize}
+                        penColor={selectedColor}
+                        backgroundColor="#ffffff"
+                        style={styles.canvas}
+                    />
+                </View>
+
+                {/* Tools */}
+                <View style={[styles.tools, isDarkMode && styles.toolsDark]}>
+                    {/* Colors */}
+                    <View style={styles.row}>
+                        {COLORS.map(color => (
+                            <TouchableOpacity
+                                key={color}
+                                style={[
+                                    styles.colorBtn,
+                                    { backgroundColor: color },
+                                    selectedColor === color && styles.selectedColor,
+                                ]}
+                                onPress={() => changeColor(color)}
+                            />
+                        ))}
                     </View>
 
-                    {/* Drawing Canvas */}
-                    <View style={styles.canvasContainer} {...panResponder.panHandlers}>
-                        <Svg
-                            height={Dimensions.get('window').height - 200}
-                            width={Dimensions.get('window').width}
-                            style={styles.canvas}
-                        >
-                            {paths.map((pathData, index) => (
-                                <Path
-                                    key={index}
-                                    d={pathData.path}
-                                    stroke={pathData.color}
-                                    strokeWidth={pathData.strokeWidth}
-                                    fill="none"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                />
-                            ))}
-                            {currentPath && (
-                                <Path
-                                    d={currentPath}
-                                    stroke={selectedColor}
-                                    strokeWidth={brushSize}
-                                    fill="none"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                />
-                            )}
-                        </Svg>
+                    {/* Brush Sizes */}
+                    <View style={styles.row}>
+                        {BRUSH_SIZES.map(size => (
+                            <TouchableOpacity
+                                key={size}
+                                style={[styles.sizeBtn, brushSize === size && styles.selectedSize]}
+                                onPress={() => changeSize(size)}
+                            >
+                                <View style={[styles.sizeDot, { width: size * 2, height: size * 2, borderRadius: size }]} />
+                            </TouchableOpacity>
+                        ))}
                     </View>
 
-                    {/* Tools */}
-                    <View style={[styles.toolsContainer, isDarkMode && styles.toolsContainerDark]}>
-                        {/* Color Picker */}
-                        <View style={styles.colorPicker}>
-                            {DRAWING_COLORS.map((color) => (
-                                <TouchableOpacity
-                                    key={color}
-                                    style={[
-                                        styles.colorOption,
-                                        { backgroundColor: color },
-                                        selectedColor === color && styles.selectedColorOption,
-                                    ]}
-                                    onPress={() => setSelectedColor(color)}
-                                />
-                            ))}
-                        </View>
-
-                        {/* Brush Size */}
-                        <View style={styles.brushSizeContainer}>
-                            {[2, 4, 6, 8].map((size) => (
-                                <TouchableOpacity
-                                    key={size}
-                                    style={[
-                                        styles.brushSizeOption,
-                                        isDarkMode && styles.brushSizeOptionDark,
-                                        brushSize === size && styles.selectedBrushSize,
-                                    ]}
-                                    onPress={() => setBrushSize(size)}
-                                >
-                                    <View
-                                        style={{
-                                            width: size * 2,
-                                            height: size * 2,
-                                            borderRadius: size,
-                                            backgroundColor: '#374151',
-                                        }}
-                                    />
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-
-                        {/* Action Buttons */}
-                        <View style={styles.actionButtons}>
-                            <TouchableOpacity
-                                style={[styles.actionButton, isDarkMode && styles.actionButtonDark]}
-                                onPress={undoLastStroke}
-                            >
-                                <Feather name="corner-up-left" size={20} color="#6366f1" />
-                                <Text style={styles.actionButtonText}>Undo</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.actionButton, isDarkMode && styles.actionButtonDark]}
-                                onPress={clearCanvas}
-                            >
-                                <Feather name="trash-2" size={20} color="#EF4444" />
-                                <Text style={styles.actionButtonText}>Clear</Text>
-                            </TouchableOpacity>
-                        </View>
+                    {/* Actions */}
+                    <View style={styles.actions}>
+                        <TouchableOpacity style={styles.actionBtn} onPress={handleUndo}>
+                            <Feather name="corner-up-left" size={20} color="#6366f1" />
+                            <Text style={styles.actionText}>Undo</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.actionBtn} onPress={handleClear}>
+                            <Feather name="trash-2" size={20} color="#EF4444" />
+                            <Text style={styles.actionText}>Clear</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
-            </Modal>
-        </View>
+            </View>
+        </Modal>
     );
 }
 
@@ -230,163 +209,161 @@ const styles = StyleSheet.create({
     container: {
         marginVertical: 12,
     },
-    openButton: {
+    openBtn: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: '#EEF2FF',
-        paddingVertical: 12,
-        paddingHorizontal: 20,
+        paddingVertical: 14,
+        paddingHorizontal: 24,
         borderRadius: 12,
-        gap: 8,
+        gap: 10,
     },
-    openButtonText: {
-        fontSize: 14,
+    openBtnText: {
+        fontSize: 15,
         fontWeight: '600',
         color: '#6366f1',
     },
-    drawingPreview: {
+    preview: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F9FAFB',
-        padding: 12,
+        backgroundColor: '#F3F4F6',
+        padding: 16,
         borderRadius: 12,
         gap: 12,
     },
-    drawingPreviewDark: {
+    previewDark: {
         backgroundColor: '#1e293b',
     },
-    drawingInfo: {
+    previewText: {
         flex: 1,
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    drawingLabel: {
         fontSize: 14,
-        fontWeight: '600',
+        fontWeight: '500',
         color: '#374151',
+    },
+    textDark: {
+        color: '#cbd5e1',
+    },
+    editBtn: {
+        marginRight: 8,
     },
     editText: {
         fontSize: 14,
         fontWeight: '600',
         color: '#6366f1',
     },
-    modalContainer: {
+    modal: {
         flex: 1,
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#fff',
     },
-    modalContainerDark: {
+    modalDark: {
         backgroundColor: '#0f172a',
     },
     header: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 16,
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
         paddingVertical: 16,
         borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
+        borderBottomColor: '#E5E7EB',
     },
     headerDark: {
-        borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+        borderBottomColor: '#334155',
     },
-    headerTitle: {
+    title: {
         fontSize: 18,
-        fontWeight: '700',
+        fontWeight: '600',
         color: '#111827',
     },
-    saveButton: {
+    titleDark: {
+        color: '#f8fafc',
+    },
+    saveBtn: {
         paddingVertical: 8,
         paddingHorizontal: 16,
-        backgroundColor: '#EEF2FF',
+        backgroundColor: '#6366f1',
         borderRadius: 8,
+        minWidth: 60,
+        alignItems: 'center',
     },
-    saveButtonText: {
+    saveBtnText: {
         fontSize: 14,
-        fontWeight: '700',
-        color: '#6366f1',
+        fontWeight: '600',
+        color: '#fff',
     },
-    canvasContainer: {
+    canvasWrapper: {
         flex: 1,
-        backgroundColor: '#FFFFFF',
+        width: '100%',
     },
     canvas: {
-        backgroundColor: '#FFFFFF',
+        flex: 1,
+        width: '100%',
+        height: '100%',
     },
-    toolsContainer: {
-        padding: 16,
-        backgroundColor: '#F9FAFB',
+    tools: {
+        backgroundColor: '#fff',
+        paddingVertical: 20,
+        paddingHorizontal: 20,
         borderTopWidth: 1,
         borderTopColor: '#E5E7EB',
+        gap: 16,
     },
-    toolsContainerDark: {
+    toolsDark: {
         backgroundColor: '#1e293b',
-        borderTopColor: 'rgba(255, 255, 255, 0.05)',
+        borderTopColor: '#334155',
     },
-    colorPicker: {
+    row: {
         flexDirection: 'row',
-        justifyContent: 'space-around',
-        marginBottom: 16,
+        justifyContent: 'center',
+        gap: 16,
     },
-    colorOption: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+    colorBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        borderWidth: 3,
+        borderColor: 'transparent',
+    },
+    selectedColor: {
+        borderColor: '#6366f1',
+    },
+    sizeBtn: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: '#F3F4F6',
+        alignItems: 'center',
+        justifyContent: 'center',
         borderWidth: 2,
         borderColor: 'transparent',
     },
-    selectedColorOption: {
-        borderColor: '#6366f1',
-        borderWidth: 3,
-    },
-    brushSizeContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-        marginBottom: 16,
-    },
-    brushSizeOption: {
-        width: 48,
-        height: 48,
-        borderRadius: 8,
-        backgroundColor: '#F3F4F6',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    brushSizeOptionDark: {
-        backgroundColor: '#334155',
-    },
-    selectedBrushSize: {
+    selectedSize: {
         backgroundColor: '#EEF2FF',
-        borderWidth: 2,
         borderColor: '#6366f1',
     },
-    actionButtons: {
+    sizeDot: {
+        backgroundColor: '#374151',
+    },
+    actions: {
         flexDirection: 'row',
+        justifyContent: 'center',
         gap: 12,
     },
-    actionButton: {
-        flex: 1,
+    actionBtn: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#F3F4F6',
+        gap: 8,
         paddingVertical: 12,
-        borderRadius: 8,
-        gap: 6,
+        paddingHorizontal: 20,
+        borderRadius: 10,
+        backgroundColor: '#F3F4F6',
+        flex: 1,
+        justifyContent: 'center',
     },
-    actionButtonDark: {
-        backgroundColor: '#334155',
-    },
-    actionButtonText: {
+    actionText: {
         fontSize: 14,
         fontWeight: '600',
         color: '#374151',
-    },
-    buttonDark: {
-        backgroundColor: '#1e293b',
-    },
-    textDark: {
-        color: '#f8fafc',
     },
 });
