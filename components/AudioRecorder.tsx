@@ -8,9 +8,10 @@ type AudioRecorderProps = {
     onAudioRecorded: (uri: string) => void;
     onAudioDeleted?: () => void;
     existingAudioUri?: string;
+    autoStart?: boolean;
 };
 
-export default function AudioRecorder({ onAudioRecorded, onAudioDeleted, existingAudioUri }: AudioRecorderProps) {
+export default function AudioRecorder({ onAudioRecorded, onAudioDeleted, existingAudioUri, autoStart }: AudioRecorderProps) {
     const { isDarkMode } = useTheme();
     const [recording, setRecording] = useState<Audio.Recording | null>(null);
     const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -136,6 +137,15 @@ export default function AudioRecorder({ onAudioRecorded, onAudioDeleted, existin
         const secs = seconds % 60;
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
+
+    const [hasAutoStarted, setHasAutoStarted] = useState(false);
+
+    React.useEffect(() => {
+        if (autoStart && !hasAutoStarted && !existingAudioUri) {
+            startRecording();
+            setHasAutoStarted(true);
+        }
+    }, [autoStart]);
 
     React.useEffect(() => {
         return () => {

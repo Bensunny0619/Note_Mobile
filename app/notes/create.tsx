@@ -13,7 +13,7 @@ import {
     Image
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import api from '../../services/api';
 import * as offlineApi from '../../services/offlineApi';
 import { useNetwork } from '../../context/NetworkContext';
@@ -52,6 +52,22 @@ export default function CreateNote() {
     const { isDarkMode } = useTheme();
     const { isOnline, triggerSync } = useNetwork();
     const router = useRouter();
+    const { type } = useLocalSearchParams<{ type: string }>();
+
+    React.useEffect(() => {
+        if (type === 'image') {
+            // Small delay to ensure permissions/ui are ready
+            setTimeout(() => {
+                pickImage();
+            }, 500);
+        } else if (type === 'list') {
+            if (checklistItems.length === 0) {
+                setChecklistItems([
+                    { id: Date.now().toString(), content: '', is_completed: false }
+                ]);
+            }
+        }
+    }, [type]);
 
     const handleCreate = async () => {
         if (!title && !content && checklistItems.length === 0) {
@@ -447,6 +463,7 @@ export default function CreateNote() {
                             onAudioRecorded={(uri) => setAudioUri(uri)}
                             onAudioDeleted={() => setAudioUri(null)}
                             existingAudioUri={audioUri || undefined}
+                            autoStart={type === 'audio'}
                         />
 
                         {/* Drawing Section */}
@@ -457,6 +474,7 @@ export default function CreateNote() {
                             onDrawingSaved={(uri) => setDrawingUri(uri)}
                             onDrawingDeleted={() => setDrawingUri(null)}
                             existingDrawing={drawingUri || undefined}
+                            initialOpen={type === 'drawing'}
                         />
 
                         <View style={styles.colorSection}>

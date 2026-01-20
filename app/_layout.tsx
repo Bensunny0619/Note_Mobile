@@ -58,7 +58,7 @@ function RootLayoutNav() {
       router.replace('/(auth)/login');
     } else if (user && inAuthGroup) {
       // Redirect to tabs if authenticated
-      router.replace('/(tabs)');
+      router.replace('/(drawer)');
     }
   }, [user, segments, isLoading]);
 
@@ -72,7 +72,7 @@ function RootLayoutNav() {
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(drawer)" />
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="notes/create" />
       <Stack.Screen name="notes/edit/[id]" />

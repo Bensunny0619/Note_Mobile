@@ -1,0 +1,968 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigation, DrawerActions } from '@react-navigation/native';
+import {
+    View,
+    Text,
+    FlatList,
+    TouchableOpacity,
+    ActivityIndicator,
+    RefreshControl,
+    StyleSheet,
+    TextInput,
+    Dimensions,
+    Alert,
+    Share,
+    Modal,
+    TouchableWithoutFeedback,
+    ScrollView,
+    Image as NoteImage
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '../../context/AuthContext';
+import api from '../../services/api';
+import * as offlineApi from '../../services/offlineApi';
+import { useNetwork } from '../../context/NetworkContext';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useLabels } from '../../context/LabelContext';
+import { useTheme } from '../../context/ThemeContext';
+import { useAudio } from '../../context/AudioContext';
+import CreationFab from '../../components/CreationFab';
+
+const { width, height } = Dimensions.get('window');
+const COLUMN_WIDTH = (width - 60) / 2;
+
+type Note = {
+    id: number | string;
+    title: string;
+    content: string;
+    color: string;
+    created_at: string;
+    is_pinned: boolean;
+    is_archived: boolean;
+    checklist_items: any[];
+    labels: any[];
+    images: any[];
+    audio_recordings: any[];
+    drawings: any[];
+    reminder?: any; // Added missing reminder type
+};
+
+export default function NotesScreen() {
+    const { user, logout } = useAuth();
+    const [notes, setNotes] = useState<Note[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [selectedLabelId, setSelectedLabelId] = useState<number | null>(null);
+    const [selectedNote, setSelectedNote] = useState<Note | null>(null);
+    const [isMenuVisible, setIsMenuVisible] = useState(false);
+    const { labels: allLabels } = useLabels();
+    const { isDarkMode } = useTheme();
+    const { isOnline, pendingCount, triggerSync, lastSync } = useNetwork();
+    const { playAudio, isPlaying, currentUri } = useAudio();
+    const router = useRouter();
+    const navigation = useNavigation();
+
+    const fetchNotes = useCallback(async () => {
+        try {
+            console.log("--- FETCHING NOTES ---");
+            const fetchedNotes = await offlineApi.getNotes(searchQuery, selectedLabelId || undefined);
+            console.log(`📋 Fetched ${fetchedNotes.length} notes from cache/server`);
+            // console.log("First note:", fetchedNotes[0]);
+            setNotes(fetchedNotes);
+        } catch (error) {
+            console.error('Error fetching notes:', error);
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, [searchQuery, selectedLabelId]);
+
+    useEffect(() => {
+        fetchNotes();
+        // lastSync added to trigger refetch on real-time updates or sync completion
+    }, [fetchNotes, lastSync]);
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchNotes();
+        }, [fetchNotes])
+    );
+
+    const onRefresh = () => {
+        setRefreshing(true);
+        fetchNotes();
+    };
+
+    const handleLongPress = (note: Note) => {
+        setSelectedNote(note);
+        setIsMenuVisible(true);
+    };
+
+    const closeMenu = () => {
+        setIsMenuVisible(false);
+        setSelectedNote(null);
+    };
+
+    const togglePin = async () => {
+        if (!selectedNote) return;
+        const noteId = selectedNote.id;
+        const currentStatus = selectedNote.is_pinned;
+        closeMenu();
+        try {
+            await api.put(`/notes/${noteId}/${currentStatus ? 'unpin' : 'pin'}`);
+            fetchNotes();
+        } catch (error) {
+            Alert.alert('Error', 'Failed to update pin status');
+        }
+    };
+
+    const toggleArchive = async () => {
+        if (!selectedNote) return;
+        const noteId = selectedNote.id;
+        const currentStatus = selectedNote.is_archived;
+        closeMenu();
+        try {
+            await api.put(`/notes/${noteId}/${currentStatus ? 'unarchive' : 'archive'}`);
+            fetchNotes();
+        } catch (error) {
+            Alert.alert('Error', 'Failed to update archive status');
+        }
+    };
+
+    const handleShare = async () => {
+        if (!selectedNote) return;
+        const note = selectedNote;
+        closeMenu();
+        try {
+            let shareMessage = `${note.title}\n\n`;
+            if (note.content) {
+                shareMessage += `${note.content}\n\n`;
+            }
+
+            if (note.checklist_items && note.checklist_items.length > 0) {
+                const checklistText = note.checklist_items
+                    .map((item: any) => `${item.is_completed ? '☑' : '☐'} ${item.text}`)
+                    .join('\n');
+                shareMessage += `Checklist:\n${checklistText}\n\n`;
+            }
+
+            if (note.labels && note.labels.length > 0) {
+                const labelText = note.labels.map((l: any) => `#${l.name}`).join(' ');
+                shareMessage += `Labels: ${labelText}`;
+            }
+
+            await Share.share({
+                message: shareMessage.trim(),
+                title: note.title
+            });
+        } catch (error) {
+            console.error('Share error:', error);
+        }
+    };
+
+    const confirmDelete = () => {
+        if (!selectedNote) return;
+        const noteId = selectedNote.id;
+        closeMenu();
+        Alert.alert(
+            'Delete Note',
+            'Are you sure you want to delete this note?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await offlineApi.deleteNote(noteId);
+                            if (isOnline) triggerSync();
+                            fetchNotes();
+                        } catch (error) {
+                            Alert.alert('Error', 'Failed to delete note');
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const filteredNotes = notes.filter(note => {
+        const matchesSearch = (note.title?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (note.content?.toLowerCase().includes(searchQuery.toLowerCase()));
+
+        const matchesLabel = selectedLabelId
+            ? note.labels?.some(l => l.id === selectedLabelId)
+            : true;
+
+        return matchesSearch && matchesLabel;
+    });
+
+    const renderNote = ({ item }: { item: any }) => {
+        // Merge images and drawings for preview
+        const allVisuals = [
+            ...(item.images || []).map((img: any) => ({ ...img, uri: img.image_url, type: 'image' })),
+            ...(item.drawings || []).map((drw: any) => ({ ...drw, uri: drw.drawing_url, type: 'drawing', id: `d-${drw.id}` }))
+        ];
+
+        return (
+            <TouchableOpacity
+                style={[
+                    styles.noteCard,
+                    { backgroundColor: item.color || (isDarkMode ? '#1e293b' : '#FFFFFF') },
+                    isDarkMode && styles.noteCardDark
+                ]}
+                onPress={() => router.push(`/notes/edit/${item.id}` as any)}
+                onLongPress={() => handleLongPress(item)}
+                activeOpacity={0.7}
+            >
+                <View style={styles.noteHeaderRow}>
+                    <Text style={[styles.noteTitle, isDarkMode && styles.textDark]} numberOfLines={2}>{item.title}</Text>
+                    {item.is_pinned && <MaterialCommunityIcons name="pin" size={16} color="#6366f1" style={{ marginLeft: 8 }} />}
+                </View>
+
+                {/* Audio Recordings Preview */}
+                {item.audio_recordings?.length > 0 && (
+                    <View style={styles.audioPreviewContainer}>
+                        {item.audio_recordings.slice(0, 1).map((audio: any) => {
+                            const audioUri = audio.audio_url || audio.file_url || audio.uri;
+                            const isThisPlaying = isPlaying && currentUri === audioUri;
+                            return (
+                                <TouchableOpacity
+                                    key={audio.id}
+                                    style={[styles.audioPill, isDarkMode && styles.audioPillDark]}
+                                    onPress={(e) => {
+                                        e.stopPropagation(); // Prevent opening note
+                                        if (audioUri) playAudio(audioUri, {
+                                            noteId: item.id,
+                                            title: item.title || 'Audio Note',
+                                            duration: audio.duration ? audio.duration * 1000 : undefined
+                                        });
+                                    }}
+                                >
+                                    <Feather name={isThisPlaying ? "pause" : "play"} size={12} color="#6366f1" />
+                                    <Text style={[styles.audioPillText, isDarkMode && { color: '#818cf8' }]}>
+                                        Audio {item.audio_recordings.length > 1 ? `(+${item.audio_recordings.length - 1})` : ''}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                )}
+
+                {/* Visuals (Images + Drawings) */}
+                {allVisuals.length > 0 && (
+                    <View style={styles.noteImagesPreview}>
+                        {allVisuals.slice(0, 3).map((visual: any, index: number) => (
+                            <NoteImage
+                                key={visual.id}
+                                source={{ uri: visual.uri }}
+                                style={[
+                                    styles.notePreviewImage,
+                                    index === 0 && allVisuals.length === 1 && { width: '100%', height: 120 },
+                                    visual.type === 'drawing' && { backgroundColor: '#FFFFFF' } // Drawing needs white bg usually
+                                ]}
+                                resizeMode={visual.type === 'drawing' ? 'contain' : 'cover'}
+                            />
+                        ))}
+                        {allVisuals.length > 3 && (
+                            <View style={styles.moreImagesIndicator}>
+                                <Text style={styles.moreImagesText}>+{allVisuals.length - 3}</Text>
+                            </View>
+                        )}
+                    </View>
+                )}
+
+                {item.content ? (
+                    <Text style={[styles.noteContent, isDarkMode && styles.textDarkSecondary]} numberOfLines={item.checklist_items?.length > 0 || allVisuals.length > 0 ? 2 : 5}>
+                        {item.content}
+                    </Text>
+                ) : null}
+
+                {item.checklist_items?.length > 0 && (
+                    <View style={styles.checklistPreview}>
+                        {item.checklist_items.slice(0, 3).map((check: any) => (
+                            <View key={check.id} style={styles.previewItem}>
+                                <Feather
+                                    name={check.is_completed ? "check-square" : "square"}
+                                    size={12}
+                                    color={check.is_completed ? "#6366f1" : "#9CA3AF"}
+                                />
+                                <Text
+                                    style={[
+                                        styles.previewText,
+                                        isDarkMode && styles.textDarkSecondary,
+                                        check.is_completed && styles.previewTextCompleted
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    {check.text}
+                                </Text>
+                            </View>
+                        ))}
+                        {item.checklist_items.length > 3 && (
+                            <Text style={styles.moreItemsText}>+ {item.checklist_items.length - 3} more</Text>
+                        )}
+                    </View>
+                )}
+
+                {item.labels?.length > 0 && (
+                    <View style={styles.labelPreviewContainer}>
+                        {item.labels.slice(0, 2).map((label: any) => (
+                            <View key={label.id} style={[styles.miniLabelChip, isDarkMode && { backgroundColor: 'rgba(129, 140, 248, 0.1)', borderColor: 'rgba(129, 140, 248, 0.2)' }]}>
+                                <Text style={[styles.miniLabelText, isDarkMode && { color: '#818cf8' }]} numberOfLines={1}>{label.name}</Text>
+                            </View>
+                        ))}
+                        {item.labels.length > 2 && (
+                            <Text style={[styles.miniMoreLabels, isDarkMode && styles.textDarkSecondary]}>+{item.labels.length - 2}</Text>
+                        )}
+                    </View>
+                )}
+
+                <View style={styles.noteFooter}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={[styles.noteDate, isDarkMode && styles.textDarkSecondary]}>
+                            {new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        </Text>
+                        {item.reminder && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 12 }}>
+                                <Feather name="bell" size={12} color={isDarkMode ? "#818cf8" : "#6366f1"} />
+                                <Text style={[styles.noteDate, { marginLeft: 4, color: isDarkMode ? "#818cf8" : "#6366f1" }]}>
+                                    {new Date(item.reminder.remind_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                    {item.is_archived && <Feather name="archive" size={14} color={isDarkMode ? "#94a3b8" : "#9CA3AF"} />}
+                </View>
+            </TouchableOpacity>
+        );
+    };
+
+    return (
+        <SafeAreaView style={[styles.container, isDarkMode && styles.containerDark]}>
+
+
+            {/* Offline Banner */}
+            {!isOnline && (
+                <View style={styles.offlineBanner}>
+                    <Feather name="wifi-off" size={16} color="#FFFFFF" />
+                    <Text style={styles.offlineBannerText}>
+                        Offline Mode • Changes will sync when online
+                    </Text>
+                </View>
+            )}
+
+            {/* Sync Status Indicator */}
+            {isOnline && pendingCount > 0 && (
+                <View style={styles.syncBanner}>
+                    <ActivityIndicator size="small" color="#6366f1" />
+                    <Text style={styles.syncBannerText}>
+                        Syncing {pendingCount} change{pendingCount !== 1 ? 's' : ''}...
+                    </Text>
+                </View>
+            )}
+
+            {/* Google Keep Style Header */}
+            <View style={styles.headerContainer}>
+                <View style={[styles.floatingHeader, isDarkMode && styles.floatingHeaderDark]}>
+                    <TouchableOpacity onPress={() => navigation.dispatch(DrawerActions.openDrawer())} style={styles.menuButton}>
+                        <Feather name="menu" size={24} color={isDarkMode ? "#E2E8F0" : "#5F6368"} />
+                    </TouchableOpacity>
+
+                    <TextInput
+                        style={[styles.headerSearchInput, isDarkMode && styles.textDark]}
+                        placeholder="Search your notes"
+                        placeholderTextColor={isDarkMode ? "#94A3B8" : "#5F6368"}
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                    />
+
+                    <TouchableOpacity onPress={logout} style={styles.profileButton}>
+                        {/* Fallback to simple circle if no image */}
+                        <View style={[styles.profileAvatar, { backgroundColor: '#A5B4FC' }]}>
+                            <Text style={{ color: '#ffffff', fontWeight: 'bold' }}>
+                                {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                            </Text>
+                        </View>
+                    </TouchableOpacity>
+                </View>
+            </View>
+
+            {/* Label Filter Bar */}
+            {allLabels.length > 0 && (
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.filterScroll}
+                    contentContainerStyle={styles.filterContent}
+                >
+                    <TouchableOpacity
+                        style={[
+                            styles.filterChip,
+                            selectedLabelId === null && styles.filterChipActive
+                        ]}
+                        onPress={() => setSelectedLabelId(null)}
+                    >
+                        <Text style={[
+                            styles.filterChipText,
+                            selectedLabelId === null && styles.filterChipTextActive
+                        ]}>All</Text>
+                    </TouchableOpacity>
+
+                    {allLabels.map(label => (
+                        <TouchableOpacity
+                            key={label.id}
+                            style={[
+                                styles.filterChip,
+                                selectedLabelId === label.id && styles.filterChipActive
+                            ]}
+                            onPress={() => setSelectedLabelId(label.id)}
+                        >
+                            <Text style={[
+                                styles.filterChipText,
+                                selectedLabelId === label.id && styles.filterChipTextActive
+                            ]}>
+                                {label.name}
+                            </Text>
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+            )}
+
+
+            <View style={styles.content}>
+                {loading && !refreshing ? (
+                    <View style={styles.loaderContainer}>
+                        <ActivityIndicator size="large" color="#6366f1" />
+                    </View>
+                ) : (
+                    <FlatList
+                        data={filteredNotes}
+                        renderItem={renderNote}
+                        keyExtractor={(item) => item.id.toString()}
+                        numColumns={2}
+                        columnWrapperStyle={styles.columnWrapper}
+                        contentContainerStyle={styles.listContainer}
+                        showsVerticalScrollIndicator={false}
+                        refreshControl={
+                            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6366f1" />
+                        }
+                        ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <View style={[styles.emptyIconContainer, isDarkMode && styles.emptyIconContainerDark]}>
+                                    <View style={styles.homaLogoSymbol}>
+                                        <Text style={styles.homaLogoText}>H</Text>
+                                    </View>
+                                </View>
+                                <Text style={[styles.emptyTitle, isDarkMode && styles.textDark]}>Nothing here yet</Text>
+                                <Text style={[styles.emptySubtitle, isDarkMode && styles.textDarkSecondary]}>Tap the + button to create your first note</Text>
+                            </View>
+                        }
+                    />
+                )}
+            </View>
+
+            <CreationFab />
+
+            {/* Premium Action Menu (Bottom Sheet) */}
+            <Modal
+                visible={isMenuVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={closeMenu}
+            >
+                <TouchableWithoutFeedback onPress={closeMenu}>
+                    <View style={styles.modalOverlay}>
+                        <TouchableWithoutFeedback>
+                            <View style={[styles.menuContent, isDarkMode && styles.menuContentDark]}>
+                                <View style={styles.menuHeader}>
+                                    <View style={[styles.menuHandle, isDarkMode && styles.menuHandleDark]} />
+                                    <Text style={[styles.menuTitle, isDarkMode && styles.textDark]} numberOfLines={1}>
+                                        {selectedNote?.title || 'Note Options'}
+                                    </Text>
+                                </View>
+
+                                <View style={styles.menuOptions}>
+                                    <TouchableOpacity style={styles.menuItem} onPress={togglePin}>
+                                        <View style={[styles.menuIconContainer, { backgroundColor: isDarkMode ? 'rgba(99, 102, 241, 0.1)' : '#EEF2FF' }]}>
+                                            <MaterialCommunityIcons name="pin" size={22} color="#6366f1" />
+                                        </View>
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>
+                                            {selectedNote?.is_pinned ? 'Unpin note' : 'Pin note'}
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={toggleArchive}>
+                                        <View style={[styles.menuIconContainer, { backgroundColor: isDarkMode ? 'rgba(148, 163, 184, 0.1)' : '#F3F4F6' }]}>
+                                            <Feather name="archive" size={20} color={isDarkMode ? "#94a3b8" : "#4B5563"} />
+                                        </View>
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>
+                                            {selectedNote?.is_archived ? 'Remove from archive' : 'Archive note'}
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={handleShare}>
+                                        <View style={[styles.menuIconContainer, { backgroundColor: isDarkMode ? 'rgba(34, 197, 94, 0.1)' : '#F0FDF4' }]}>
+                                            <Feather name="share-2" size={20} color="#22C55E" />
+                                        </View>
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>Share note</Text>
+                                    </TouchableOpacity>
+
+                                    <View style={[styles.menuDivider, isDarkMode && styles.menuDividerDark]} />
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={confirmDelete}>
+                                        <View style={[styles.menuIconContainer, { backgroundColor: '#FEF2F2' }]}>
+                                            <Feather name="trash-2" size={20} color="#EF4444" />
+                                        </View>
+                                        <Text style={[styles.menuItemText, { color: '#EF4444' }]}>Delete note</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+        </SafeAreaView >
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#FBFBFF',
+    },
+    containerDark: {
+        backgroundColor: '#0f172a',
+    },
+    headerDark: {
+        borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    },
+    textDark: {
+        color: '#f8fafc',
+    },
+    textDarkSecondary: {
+        color: '#94a3b8',
+    },
+    searchBarDark: {
+        backgroundColor: 'rgba(30, 41, 59, 0.6)',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+    },
+    filterChipDark: {
+        backgroundColor: '#1e293b',
+        borderColor: '#334155',
+    },
+    filterChipActiveDark: {
+        backgroundColor: '#6366f1',
+        borderColor: '#6366f1',
+    },
+    noteCardDark: {
+        backgroundColor: '#1e293b',
+        borderColor: '#334155',
+    },
+    avatarDark: {
+        backgroundColor: '#1e293b',
+    },
+    avatarTextDark: {
+        color: '#818cf8',
+    },
+    emptyIconContainerDark: {
+        backgroundColor: '#1e293b',
+    },
+    menuContentDark: {
+        backgroundColor: '#0f172a',
+    },
+    menuHandleDark: {
+        backgroundColor: '#334155',
+    },
+    menuItemTextDark: {
+        color: '#f8fafc',
+    },
+    menuDividerDark: {
+        backgroundColor: '#1e293b',
+    },
+    headerContainer: {
+        paddingHorizontal: 16,
+        paddingTop: 12,
+        paddingBottom: 4,
+        zIndex: 10,
+    },
+    floatingHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 8,
+        height: 52,
+        paddingHorizontal: 12,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.18,
+        shadowRadius: 1.0,
+        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#E0E0E0',
+    },
+    floatingHeaderDark: {
+        backgroundColor: '#1E293B', // Slate 800
+        borderColor: 'transparent',
+        shadowColor: '#000',
+        shadowOpacity: 0.3,
+    },
+    menuButton: {
+        padding: 8,
+        marginRight: 4,
+    },
+    headerSearchInput: {
+        flex: 1,
+        fontSize: 16,
+        paddingHorizontal: 8,
+        color: '#1F2937',
+    },
+    profileButton: {
+        padding: 4,
+        marginLeft: 4,
+    },
+    profileAvatar: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    searchInput: {
+        flex: 1,
+        marginLeft: 12,
+        fontSize: 16,
+        color: '#1F2937',
+        fontWeight: '500',
+    },
+    offlineBanner: {
+        backgroundColor: '#EF4444',
+        padding: 8,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 8,
+    },
+    offlineBannerText: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    syncBanner: {
+        backgroundColor: '#EEF2FF',
+        padding: 8,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E7FF',
+    },
+    syncBannerText: {
+        color: '#6366f1',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    content: {
+        flex: 1,
+    },
+    loaderContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    listContainer: {
+        paddingHorizontal: 20,
+        paddingTop: 16,
+        paddingBottom: 110,
+    },
+    columnWrapper: {
+        justifyContent: 'space-between',
+    },
+    noteCard: {
+        width: COLUMN_WIDTH,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: '#E0E0E0',
+        // No explicit shadow for flat clean look, or very subtle
+    },
+    noteHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 10,
+    },
+    noteTitle: {
+        flex: 1,
+        fontSize: 17,
+        fontWeight: '800',
+        color: '#111827',
+        lineHeight: 22,
+    },
+    noteContent: {
+        fontSize: 14,
+        color: '#4B5563',
+        lineHeight: 20,
+        fontWeight: '400',
+    },
+    noteImagesPreview: {
+        flexDirection: 'row',
+        gap: 4,
+        marginBottom: 12,
+        borderRadius: 16,
+        overflow: 'hidden',
+    },
+    notePreviewImage: {
+        flex: 1,
+        height: 80,
+        borderRadius: 8,
+    },
+    moreImagesIndicator: {
+        position: 'absolute',
+        right: 0,
+        bottom: 0,
+        top: 0,
+        width: 30,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    moreImagesText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+    moreItemsText: {
+        fontSize: 10,
+        color: '#9CA3AF',
+        marginTop: 4,
+        fontStyle: 'italic',
+    },
+    filterScroll: {
+        marginTop: 12,
+        marginBottom: 4,
+    },
+    filterContent: {
+        paddingRight: 40,
+    },
+    filterChip: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 12,
+        backgroundColor: '#FFFFFF',
+        marginRight: 8,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    filterChipActive: {
+        backgroundColor: '#6366f1',
+        borderColor: '#6366f1',
+    },
+    filterChipText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#6B7280',
+    },
+    filterChipTextActive: {
+        color: '#FFFFFF',
+    },
+    labelPreviewContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginTop: 10,
+        gap: 4,
+    },
+    miniLabelChip: {
+        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        borderWidth: 0.5,
+        borderColor: 'rgba(99, 102, 241, 0.2)',
+    },
+    miniLabelText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#6366f1',
+    },
+    miniMoreLabels: {
+        fontSize: 10,
+        color: '#9CA3AF',
+        fontWeight: '500',
+    },
+    noteFooter: {
+        marginTop: 16,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-end',
+    },
+    noteDate: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#9CA3AF',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    checklistPreview: {
+        marginTop: 10,
+        gap: 4,
+    },
+    previewItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    previewText: {
+        fontSize: 12,
+        color: '#6B7280',
+        flex: 1,
+    },
+    previewTextCompleted: {
+        textDecorationLine: 'line-through',
+        color: '#D1D5DB',
+    },
+    emptyContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 100,
+    },
+    emptyIconContainer: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: '#EEF2FF',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 24,
+    },
+    homaLogoSymbol: {
+        width: 60,
+        height: 60,
+        borderRadius: 18,
+        backgroundColor: '#6366f1',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transform: [{ rotate: '45deg' }],
+    },
+    homaLogoText: {
+        color: 'white',
+        fontSize: 32,
+        fontWeight: '900',
+        transform: [{ rotate: '-45deg' }],
+    },
+    emptyTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#111827',
+        marginBottom: 10,
+    },
+    emptySubtitle: {
+        fontSize: 16,
+        color: '#6B7280',
+        textAlign: 'center',
+        paddingHorizontal: 40,
+        lineHeight: 22,
+    },
+    fab: {
+        position: 'absolute',
+        right: 24,
+        bottom: 24,
+        width: 68,
+        height: 68,
+        borderRadius: 24,
+        backgroundColor: '#6366f1',
+        alignItems: 'center',
+        justifyContent: 'center',
+        elevation: 10,
+        shadowColor: '#6366f1',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.4,
+        shadowRadius: 16,
+    },
+    // Modal & Menu Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.4)',
+        justifyContent: 'flex-end',
+    },
+    menuContent: {
+        backgroundColor: '#FFFFFF',
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        paddingBottom: 40,
+        maxHeight: height * 0.7,
+    },
+    menuHeader: {
+        alignItems: 'center',
+        paddingTop: 12,
+        paddingBottom: 20,
+    },
+    menuHandle: {
+        width: 40,
+        height: 5,
+        borderRadius: 2.5,
+        backgroundColor: '#E5E7EB',
+        marginBottom: 20,
+    },
+    menuTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#111827',
+        paddingHorizontal: 24,
+    },
+    menuOptions: {
+        paddingHorizontal: 16,
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        borderRadius: 16,
+    },
+    menuIconContainer: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 16,
+    },
+    menuItemText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#374151',
+    },
+    menuDivider: {
+        height: 1,
+        backgroundColor: '#F3F4F6',
+        marginVertical: 8,
+        marginHorizontal: 16,
+    },
+    audioPreviewContainer: {
+        flexDirection: 'row',
+        marginTop: 6,
+        marginBottom: 2,
+    },
+    audioPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#EEF2FF',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 12,
+        gap: 4,
+    },
+    audioPillDark: {
+        backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    },
+    audioPillText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#6366f1',
+    },
+});
