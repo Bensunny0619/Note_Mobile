@@ -2,8 +2,8 @@ import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { router } from 'expo-router';
 
-const API_URL = 'http://192.168.0.2:8000/api';
-// const API_URL = 'http://192.168.1.7:8000/api';
+const API_URL = 'http://192.168.0.3:8000/api';
+// const API_URL = 'http://192.168.1.9:8000/api';
 // const API_URL = 'http://192.168.84.230:8000/api';
 
 const api = axios.create({
