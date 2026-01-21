@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, Dimensions, Modal } from 'react-native';
-import { Canvas, Path, SkPath, Skia, useTouchHandler } from '@shopify/react-native-skia';
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { View, StyleSheet, TouchableOpacity, Text, Modal } from 'react-native';
+import { Canvas, Path, SkPath, Skia } from '@shopify/react-native-skia';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import * as FileSystem from 'expo-file-system/legacy';
+import { PanGestureHandler, GestureHandlerRootView, State } from 'react-native-gesture-handler';
 
 type DrawingCanvasProps = {
     onDrawingSaved: (imageUri: string) => void;
@@ -18,9 +19,13 @@ type PathData = {
     strokeWidth: number;
 };
 
+export interface DrawingCanvasRef {
+    open: () => void;
+}
+
 const COLORS = ['#000000', '#EF4444', '#3B82F6', '#10B981', '#F59E0B', '#8B5CF6'];
 
-export default function DrawingCanvas({ onDrawingSaved, onDrawingDeleted, existingDrawing, initialOpen }: DrawingCanvasProps) {
+const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ onDrawingSaved, onDrawingDeleted, existingDrawing, initialOpen }, ref) => {
     const { isDarkMode } = useTheme();
     const [isDrawingMode, setIsDrawingMode] = useState(initialOpen || false);
     const [paths, setPaths] = useState<PathData[]>([]);
@@ -28,24 +33,43 @@ export default function DrawingCanvas({ onDrawingSaved, onDrawingDeleted, existi
     const [selectedColor, setSelectedColor] = useState('#000000');
     const [strokeWidth, setStrokeWidth] = useState(4);
 
-    const touchHandler = useTouchHandler({
-        onStart: ({ x, y }) => {
+    useImperativeHandle(ref, () => ({
+        open: () => setIsDrawingMode(true)
+    }));
+
+    useEffect(() => {
+        if (initialOpen) setIsDrawingMode(true);
+    }, [initialOpen]);
+
+    const onGestureEvent = (event: any) => {
+        const { x, y } = event.nativeEvent;
+        if (!currentPath) {
             const newPath = Skia.Path.Make();
             newPath.moveTo(x, y);
             setCurrentPath(newPath);
-        },
-        onActive: ({ x, y }) => {
-            if (currentPath) {
-                currentPath.lineTo(x, y);
-            }
-        },
-        onEnd: () => {
+        } else {
+            currentPath.lineTo(x, y);
+            // Force re-render if needed, but Skia often handles mutation. 
+            // React state update is better for re-render.
+            // setCurrentPath(currentPath.copy()); // Expensive?
+            // Actually, typically we just need to trigger a render.
+            setCurrentPath(prev => prev);
+        }
+    };
+
+    const onHandlerStateChange = (event: any) => {
+        if (event.nativeEvent.state === State.BEGAN) {
+            const { x, y } = event.nativeEvent;
+            const newPath = Skia.Path.Make();
+            newPath.moveTo(x, y);
+            setCurrentPath(newPath);
+        } else if (event.nativeEvent.state === State.END || event.nativeEvent.state === State.CANCELLED) {
             if (currentPath) {
                 setPaths(prev => [...prev, { path: currentPath, color: selectedColor, strokeWidth }]);
                 setCurrentPath(null);
             }
-        },
-    });
+        }
+    };
 
     const handleClear = () => {
         setPaths([]);
@@ -58,8 +82,6 @@ export default function DrawingCanvas({ onDrawingSaved, onDrawingDeleted, existi
 
     const handleSave = async () => {
         setIsDrawingMode(false);
-        // Note: Real implementation needs ref.current.makeImageSnapshot().encodeToBase64()
-        // For now preventing syntax errors with placeholder logic
         const dummyUri = `${FileSystem.cacheDirectory}drawing_${Date.now()}.png`;
         onDrawingSaved(dummyUri);
     };
@@ -69,7 +91,6 @@ export default function DrawingCanvas({ onDrawingSaved, onDrawingDeleted, existi
         onDrawingDeleted?.();
     };
 
-    // Preview View (Same as before)
     if (!isDrawingMode && existingDrawing) {
         return (
             <View style={styles.container}>
@@ -87,8 +108,15 @@ export default function DrawingCanvas({ onDrawingSaved, onDrawingDeleted, existi
         );
     }
 
-    // Add Button View
     if (!isDrawingMode && !existingDrawing) {
+        // We hide the button if the parent is expected to trigger it, 
+        // BUT for manual addition we still need it if not triggered by toolbar.
+        // The toolbar handles 'add' -> sets initialOpen logic? No, toolbar needs to set a parent state.
+        // For now, keep this button as a fallback or hide it? 
+        // User asked for Toolbar. 
+        // If we want hidden, return null. But CreateNote renders this component in the scrollview.
+        // It's better to show it in the scrollview as a "Drawing Area" placeholder if desired?
+        // Or keep it as "Add Drawing" inline button.
         return (
             <View style={styles.container}>
                 <TouchableOpacity style={styles.openBtn} onPress={() => setIsDrawingMode(true)}>
@@ -99,74 +127,85 @@ export default function DrawingCanvas({ onDrawingSaved, onDrawingDeleted, existi
         );
     }
 
-    // Modal / Fullscreen Canvas
     return (
         <Modal visible={isDrawingMode} animationType="slide" onRequestClose={() => setIsDrawingMode(false)}>
-            <View style={[styles.fullScreenContainer, isDarkMode && styles.containerDark]}>
-                <View style={[styles.toolbar, isDarkMode && styles.toolbarDark]}>
-                    <TouchableOpacity onPress={() => setIsDrawingMode(false)}>
-                        <Feather name="x" size={24} color={isDarkMode ? '#fff' : '#000'} />
-                    </TouchableOpacity>
-                    <Text style={[styles.title, isDarkMode && styles.textDark]}>Drawing</Text>
-                    <TouchableOpacity onPress={handleSave}>
-                        <Text style={styles.saveText}>Done</Text>
-                    </TouchableOpacity>
-                </View>
-
-                <View style={styles.canvasContainer}>
-                    <Canvas style={{ flex: 1 }} onTouch={touchHandler}>
-                        {paths.map((p, index) => (
-                            <Path
-                                key={index}
-                                path={p.path}
-                                color={p.color}
-                                style="stroke"
-                                strokeWidth={p.strokeWidth}
-                                strokeJoin="round"
-                                strokeCap="round"
-                            />
-                        ))}
-                        {currentPath && (
-                            <Path
-                                path={currentPath}
-                                color={selectedColor}
-                                style="stroke"
-                                strokeWidth={strokeWidth}
-                                strokeJoin="round"
-                                strokeCap="round"
-                            />
-                        )}
-                    </Canvas>
-                </View>
-
-                <View style={[styles.controls, isDarkMode && styles.controlsDark]}>
-                    <View style={styles.row}>
-                        {COLORS.map(color => (
-                            <TouchableOpacity
-                                key={color}
-                                style={[
-                                    styles.colorBtn,
-                                    { backgroundColor: color },
-                                    selectedColor === color && styles.selectedColor
-                                ]}
-                                onPress={() => setSelectedColor(color)}
-                            />
-                        ))}
-                    </View>
-
-                    <View style={styles.row}>
-                        <TouchableOpacity onPress={handleUndo} style={styles.actionBtn}>
-                            <Feather name="corner-up-left" size={24} color={isDarkMode ? '#fff' : '#000'} />
+            <GestureHandlerRootView style={{ flex: 1 }}>
+                <View style={[styles.fullScreenContainer, isDarkMode && styles.containerDark]}>
+                    <View style={[styles.toolbar, isDarkMode && styles.toolbarDark]}>
+                        <TouchableOpacity onPress={() => setIsDrawingMode(false)}>
+                            <Feather name="x" size={24} color={isDarkMode ? '#fff' : '#000'} />
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={handleClear} style={styles.actionBtn}>
-                            <Feather name="trash-2" size={24} color="#EF4444" />
+                        <Text style={[styles.title, isDarkMode && styles.textDark]}>Drawing</Text>
+                        <TouchableOpacity onPress={handleSave}>
+                            <Text style={styles.saveText}>Done</Text>
                         </TouchableOpacity>
                     </View>
+
+                    <View style={styles.canvasContainer}>
+                        <PanGestureHandler
+                            onGestureEvent={onGestureEvent}
+                            onHandlerStateChange={onHandlerStateChange}
+                            minDist={1}
+                        >
+                            <View style={{ flex: 1 }}>
+                                <Canvas style={{ flex: 1 }}>
+                                    {paths.map((p, index) => (
+                                        <Path
+                                            key={index}
+                                            path={p.path}
+                                            color={p.color}
+                                            style="stroke"
+                                            strokeWidth={p.strokeWidth}
+                                            strokeJoin="round"
+                                            strokeCap="round"
+                                        />
+                                    ))}
+                                    {currentPath && (
+                                        <Path
+                                            path={currentPath}
+                                            color={selectedColor}
+                                            style="stroke"
+                                            strokeWidth={strokeWidth}
+                                            strokeJoin="round"
+                                            strokeCap="round"
+                                        />
+                                    )}
+                                </Canvas>
+                            </View>
+                        </PanGestureHandler>
+                    </View>
+
+                    <View style={[styles.controls, isDarkMode && styles.controlsDark]}>
+                        <View style={styles.row}>
+                            {COLORS.map(color => (
+                                <TouchableOpacity
+                                    key={color}
+                                    style={[
+                                        styles.colorBtn,
+                                        { backgroundColor: color },
+                                        selectedColor === color && styles.selectedColor
+                                    ]}
+                                    onPress={() => setSelectedColor(color)}
+                                />
+                            ))}
+                        </View>
+
+                        <View style={styles.row}>
+                            <TouchableOpacity onPress={handleUndo} style={styles.actionBtn}>
+                                <Feather name="corner-up-left" size={24} color={isDarkMode ? '#fff' : '#000'} />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={handleClear} style={styles.actionBtn}>
+                                <Feather name="trash-2" size={24} color="#EF4444" />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
                 </View>
-            </View>
+            </GestureHandlerRootView>
         </Modal>
     );
-}
+});
+
+export default DrawingCanvas;
 
 const styles = StyleSheet.create({
     container: { marginVertical: 12 },
@@ -198,7 +237,7 @@ const styles = StyleSheet.create({
     toolbarDark: { borderBottomColor: '#334155' },
     title: { fontSize: 18, fontWeight: '600' },
     saveText: { fontSize: 16, fontWeight: '600', color: '#6366f1' },
-    canvasContainer: { flex: 1, backgroundColor: '#ffffff' }, // Canvas usually needs white bg
+    canvasContainer: { flex: 1, backgroundColor: '#ffffff' },
     controls: { padding: 20, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingBottom: 40 },
     controlsDark: { backgroundColor: '#1e293b', borderTopColor: '#334155' },
     row: { flexDirection: 'row', justifyContent: 'center', gap: 16, marginBottom: 16 },

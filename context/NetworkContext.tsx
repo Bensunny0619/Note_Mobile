@@ -27,6 +27,7 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const [lastSync, setLastSync] = useState<Date | null>(null);
     const [pendingCount, setPendingCount] = useState(0);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [syncTimeout, setSyncTimeout] = useState<number | null>(null);
 
     const triggerSync = useCallback(async (forceRefresh = false) => {
         // Allow forcing a timestamp update even if offline or syncing (for WebSockets)
@@ -36,23 +37,34 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         if (!isOnline || isSyncing) return;
 
-        setIsSyncing(true);
-        try {
-            const { successful, failed, remaining } = await processSyncQueue();
-            setPendingCount(remaining);
-
-            if (successful > 0 || forceRefresh) {
-                setLastSync(new Date());
-                if (successful > 0) {
-                    console.log(`✅ Sync complete: ${successful} successful, ${failed} failed`);
-                }
-            }
-        } catch (error) {
-            console.error('Sync failed:', error);
-        } finally {
-            setIsSyncing(false);
+        // Clear any pending sync timeout
+        if (syncTimeout) {
+            clearTimeout(syncTimeout);
         }
-    }, [isOnline, isSyncing]);
+
+        // Debounce sync calls - wait 500ms before actually syncing
+        // This prevents rapid successive syncs when user makes multiple changes
+        const timeout = setTimeout(async () => {
+            setIsSyncing(true);
+            try {
+                const { successful, failed, remaining } = await processSyncQueue();
+                setPendingCount(remaining);
+
+                if (successful > 0 || forceRefresh) {
+                    setLastSync(new Date());
+                    if (successful > 0) {
+                        console.log(`✅ Sync complete: ${successful} successful, ${failed} failed`);
+                    }
+                }
+            } catch (error) {
+                console.error('Sync failed:', error);
+            } finally {
+                setIsSyncing(false);
+            }
+        }, 500);
+
+        setSyncTimeout(timeout);
+    }, [isOnline, isSyncing, syncTimeout]);
 
     useEffect(() => {
         // Subscribe to network state changes

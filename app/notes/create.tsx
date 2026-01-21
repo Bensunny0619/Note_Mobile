@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
     View,
     Text,
@@ -17,13 +17,13 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import api from '../../services/api';
 import * as offlineApi from '../../services/offlineApi';
 import { useNetwork } from '../../context/NetworkContext';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useLabels } from '../../context/LabelContext';
 import { useTheme } from '../../context/ThemeContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
 import AudioRecorder from '../../components/AudioRecorder';
-import DrawingCanvas from '../../components/DrawingCanvas';
+import DrawingCanvas, { DrawingCanvasRef } from '../../components/DrawingCanvas';
 
 const COLORS = ['#FFFFFF', '#FECACA', '#FDE68A', '#A7F3D0', '#BFDBFE', '#DDD6FE', '#F5D0FE'];
 
@@ -46,6 +46,7 @@ export default function CreateNote() {
     const [repeatFrequency, setRepeatFrequency] = useState<'none' | 'daily' | 'weekly'>('none');
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showTimePicker, setShowTimePicker] = useState(false);
+    const [showColorPicker, setShowColorPicker] = useState(false);
     const [selectedImages, setSelectedImages] = useState<string[]>([]);
     const [audioUri, setAudioUri] = useState<string | null>(null);
     const [drawingUri, setDrawingUri] = useState<string | null>(null);
@@ -54,7 +55,10 @@ export default function CreateNote() {
     const router = useRouter();
     const { type } = useLocalSearchParams<{ type: string }>();
 
+    const drawingCanvasRef = useRef<DrawingCanvasRef>(null);
+
     React.useEffect(() => {
+        console.log("CreateNote Type Param:", type);
         if (type === 'image') {
             // Small delay to ensure permissions/ui are ready
             setTimeout(() => {
@@ -192,6 +196,21 @@ export default function CreateNote() {
 
     const removeChecklistItem = (id: string) => {
         setChecklistItems(checklistItems.filter(item => item.id !== id));
+    };
+
+    const handleToolbarAdd = () => {
+        Alert.alert(
+            'Add Attachment',
+            'Choose what you want to add',
+            [
+                { text: 'Take Photo', onPress: () => ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.7 }).then(r => { if (!r.canceled && r.assets[0].uri) setSelectedImages([...selectedImages, r.assets[0].uri]); }) },
+                { text: 'Choose Image', onPress: pickImage },
+                { text: 'Drawing', onPress: () => { setDrawingUri(null); drawingCanvasRef.current?.open(); } },
+                { text: 'Recording', onPress: () => { /* Audio recorder is auto-visible if empty, maybe scroll to it? */ } },
+                { text: 'Checkboxes', onPress: () => { if (checklistItems.length === 0) setChecklistItems([{ id: Date.now().toString(), content: '', is_completed: false }]); } },
+                { text: 'Cancel', style: 'cancel' }
+            ]
+        );
     };
 
     return (
@@ -471,6 +490,7 @@ export default function CreateNote() {
                             <Text style={[styles.sectionLabel, isDarkMode && styles.sectionLabelDark]}>Freehand Drawing</Text>
                         </View>
                         <DrawingCanvas
+                            ref={drawingCanvasRef}
                             onDrawingSaved={(uri) => setDrawingUri(uri)}
                             onDrawingDeleted={() => setDrawingUri(null)}
                             existingDrawing={drawingUri || undefined}
@@ -496,7 +516,26 @@ export default function CreateNote() {
                     </View>
                 </ScrollView>
             </KeyboardAvoidingView>
-        </SafeAreaView>
+
+            {/* Google Keep Bottom Toolbar */}
+            <View style={[styles.bottomToolbar, isDarkMode && styles.bottomToolbarDark]}>
+                <TouchableOpacity style={styles.toolbarAction} onPress={handleToolbarAdd}>
+                    <Feather name="plus-square" size={24} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.toolbarAction} onPress={() => setShowColorPicker(!showColorPicker)}>
+                    <MaterialIcons name="palette" size={24} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                </TouchableOpacity>
+
+                <Text style={[styles.editedText, isDarkMode && styles.textDarkSecondary]}>
+                    Edited {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </Text>
+
+                <TouchableOpacity style={styles.toolbarAction} onPress={() => {/* More options */ }}>
+                    <Feather name="more-vertical" size={24} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                </TouchableOpacity>
+            </View>
+        </SafeAreaView >
     );
 }
 
@@ -582,18 +621,18 @@ const styles = StyleSheet.create({
         letterSpacing: -0.5,
     },
     labelSection: {
-        marginBottom: 20,
+        marginBottom: 12, // Reduced from 20
     },
     labelScroll: {
         flexDirection: 'row',
         marginTop: 8,
     },
     labelChip: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 20,
+        paddingHorizontal: 10, // Reduced from 12
+        paddingVertical: 4, // Reduced from 6
+        borderRadius: 16, // Smaller radius
         backgroundColor: '#F3F4F6',
-        marginRight: 8,
+        marginRight: 6, // Reduced from 8
         borderWidth: 1,
         borderColor: '#E5E7EB',
     },
@@ -828,6 +867,29 @@ const styles = StyleSheet.create({
     },
     repeatChipTextActive: {
         color: '#FFFFFF',
+    },
+    bottomToolbar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        backgroundColor: '#FFFFFF',
+        justifyContent: 'space-between',
+        borderTopWidth: 1,
+        borderTopColor: 'transparent',
+    },
+    bottomToolbarDark: {
+        backgroundColor: '#0f172a',
+    },
+    toolbarAction: {
+        padding: 8,
+    },
+    editedText: {
+        fontSize: 12,
+        color: '#64748b',
+    },
+    textDarkSecondary: {
+        color: '#94a3b8',
     },
 });
 

@@ -206,6 +206,16 @@ export default function NotesScreen() {
             ...(item.drawings || []).map((drw: any) => ({ ...drw, uri: drw.drawing_url, type: 'drawing', id: `d-${drw.id}` }))
         ];
 
+        // Handle offline/local attachments
+        if (item.drawing_uri) {
+            allVisuals.push({ id: 'local-drawing', uri: item.drawing_uri, type: 'drawing' });
+        }
+        if (item.audio_uri && (!item.audio_recordings || item.audio_recordings.length === 0)) {
+            // If we have a local audio URI and no server recordings yet, we might want to show it?
+            // But existing render logic handles audio separately in audioPreviewContainer
+            // We need to make sure audioPreviewContainer uses item.audio_uri if recordings are empty
+        }
+
         return (
             <TouchableOpacity
                 style={[
@@ -223,9 +233,9 @@ export default function NotesScreen() {
                 </View>
 
                 {/* Audio Recordings Preview */}
-                {item.audio_recordings?.length > 0 && (
+                {(item.audio_recordings?.length > 0 || item.audio_uri) && (
                     <View style={styles.audioPreviewContainer}>
-                        {item.audio_recordings.slice(0, 1).map((audio: any) => {
+                        {(item.audio_recordings?.length > 0 ? item.audio_recordings : [{ id: 'local', uri: item.audio_uri }]).slice(0, 1).map((audio: any) => {
                             const audioUri = audio.audio_url || audio.file_url || audio.uri;
                             const isThisPlaying = isPlaying && currentUri === audioUri;
                             return (
@@ -744,32 +754,40 @@ const styles = StyleSheet.create({
         fontStyle: 'italic',
     },
     filterScroll: {
-        marginTop: 12,
-        marginBottom: 4,
+        marginTop: 8,
+        marginBottom: 8,
+        flexGrow: 0,
+        height: 50, // Force height
     },
     filterContent: {
+        paddingHorizontal: 16,
         paddingRight: 40,
+        alignItems: 'center', // Standardize alignment
     },
     filterChip: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 12,
-        backgroundColor: '#FFFFFF',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        backgroundColor: 'transparent',
         marginRight: 8,
         borderWidth: 1,
         borderColor: '#E5E7EB',
+        height: 36, // Explicit small height
+        justifyContent: 'center',
     },
     filterChipActive: {
-        backgroundColor: '#6366f1',
-        borderColor: '#6366f1',
+        backgroundColor: '#E8F0FE',
+        borderColor: '#E8F0FE',
     },
     filterChipText: {
         fontSize: 13,
-        fontWeight: '600',
-        color: '#6B7280',
+        fontWeight: '500',
+        color: '#5f6368',
+        lineHeight: 18, // Restrict line height
     },
     filterChipTextActive: {
-        color: '#FFFFFF',
+        color: '#1967d2', // Google Blue
+        fontWeight: '600',
     },
     labelPreviewContainer: {
         flexDirection: 'row',

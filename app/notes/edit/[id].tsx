@@ -173,6 +173,11 @@ export default function EditNote() {
                 color,
                 label_ids: selectedLabelIds,
                 repeat: repeatFrequency !== 'none' ? repeatFrequency : null,
+                checklist_items: checklistItems.map(item => ({
+                    id: item.id,
+                    text: item.content,
+                    is_completed: item.is_completed
+                }))
             });
 
             // 1.5 Handle Reminder Synchronization
@@ -187,7 +192,7 @@ export default function EditNote() {
             // a. Handle Deletions
             if (deletedImageIds.length > 0) {
                 for (const imgId of deletedImageIds) {
-                    await api.delete(`/notes/images/${imgId}`);
+                    await offlineApi.deleteImage(imgId);
                 }
             }
 
@@ -211,121 +216,74 @@ export default function EditNote() {
             // a. Handle Deletions
             if (deletedAudioIds.length > 0) {
                 for (const audioId of deletedAudioIds) {
-                    await api.delete(`/notes/audio/${audioId}`);
+                    await offlineApi.deleteAudio(audioId);
                 }
             }
 
             // b. Handle New Upload
             if (newAudioUri) {
-                const filename = newAudioUri.split('/').pop() || 'recording.m4a';
-                const match = /\.(\w+)$/.exec(filename);
-                const type = match ? `audio/${match[1]}` : `audio/m4a`;
-
-                const formData = new FormData();
-                formData.append('audio', {
-                    uri: newAudioUri,
-                    name: filename,
-                    type,
-                } as any);
-
-                await api.post(`/notes/${id}/audio`, formData, {
-                    headers: { 'Content-Type': 'multipart/form-data' },
-                });
+                await offlineApi.createAudio(id as string | number, newAudioUri);
             }
 
             // 4. Handle Drawing Synchronization
             // a. Handle Deletions
             if (deletedDrawingIds.length > 0) {
                 for (const drawingId of deletedDrawingIds) {
-                    await api.delete(`/notes/drawings/${drawingId}`);
+                    await offlineApi.deleteDrawing(drawingId);
                 }
             }
 
             // b. Handle New Upload
             if (newDrawingUri) {
-                const filename = newDrawingUri.split('/').pop() || 'drawing.png';
-
-                const formData = new FormData();
-                formData.append('drawing', {
-                    uri: newDrawingUri,
-                    name: filename,
-                    type: 'image/png',
-                } as any);
-
-                await api.post(`/notes/${id}/drawings`, formData, {
-                    headers: { 'Content-Type': 'multipart/form-data' },
-                });
+                await offlineApi.createDrawing(id as string | number, newDrawingUri);
             }
 
             // 2. Local Notifications Logic
-            // 2. Local Notifications Logic
-            // Disabled for Expo Go compatibility
-            /*
-            // Using note ID as identifier so it overwrites accurately
-            await Notifications.cancelScheduledNotificationAsync(id.toString());
-
-            if (reminderDate && reminderDate > new Date()) {
-                let trigger: any;
-
-                if (repeatFrequency === 'none') {
-                    trigger = {
-                        type: Notifications.SchedulableTriggerInputTypes.DATE,
-                        date: reminderDate
-                    };
-                } else {
-                    // Recurring notifications: Omit explicit type for Android Expo Go compatibility
-                    trigger = {
-                        hour: reminderDate!.getHours(),
-                        minute: reminderDate!.getMinutes(),
-                        repeats: true,
-                        ...(repeatFrequency === 'weekly' ? { weekday: reminderDate!.getDay() + 1 } : {}),
-                        channelId: 'default',
-                    };
-                }
-
-                await Notifications.scheduleNotificationAsync({
-                    identifier: id.toString(),
-                    content: {
-                        title: `Reminder: ${title || 'Untitled'}`,
-                        body: content ? (content.substring(0, 50) + (content.length > 50 ? '...' : '')) : 'Time for your note!',
-                        data: { noteId: id },
-                        categoryIdentifier: 'reminder',
-                        color: '#6366f1',
-                    },
-                    trigger,
-                });
-            }
-            */
+            // Disabled for now
 
             // 2. Handle Labels (Add new ones, Remove old ones)
             const labelsToAdd = selectedLabelIds.filter(lid => !initialLabelIds.includes(lid));
             const labelsToRemove = initialLabelIds.filter(lid => !selectedLabelIds.includes(lid));
 
             await Promise.all([
-                ...labelsToAdd.map(lid => api.post(`/notes/${id}/labels`, { label_id: lid })),
-                ...labelsToRemove.map(lid => api.delete(`/notes/${id}/labels/${lid}`))
+                ...labelsToAdd.map(lid => offlineApi.attachLabel(id as string | number, lid)),
+                ...labelsToRemove.map(lid => offlineApi.detachLabel(id as string | number, lid))
             ]);
 
             // 3. Handle Deleted Items
             if (deletedItemIds.length > 0) {
                 await Promise.all(
                     deletedItemIds
-                        .filter(itemId => typeof itemId === 'number') // Only delete real backend IDs
-                        .map(itemId => api.delete(`/checklist/${itemId}`))
+                        .map(itemId => offlineApi.deleteChecklistItem(itemId))
                 );
             }
 
             // 4. Handle Remaining Items (Update or Create)
             await Promise.all(checklistItems.map(item => {
+                if (typeof item.id === 'string' && !item.id.toString().startsWith('offline-')) {
+                    // Assuming string IDs that aren't 'offline-' (if that was a thing) are new/temp
+                    // Actually, just check if it's a number. If number -> Update. If string -> Create?
+                    // BUT, if we are offline, existing items might be numbers (from server) OR strings (from local create).
+                    // Ideally:
+                    // If it has a number ID, it's definitely on server -> Update.
+                    // If it has a string ID, it's local.
+                    //    If it's a temp ID (e.g. temp-...), it's NEW -> Create.
+                    //    If it's a string ID but not temp (unlikely for items?), treat as new?
+                    // In `addChecklistItem` we use `temp-${Date.now()}`.
+                }
+
                 if (typeof item.id === 'number') {
                     // Existing item -> Update
-                    return api.put(`/checklist/${item.id}`, {
+                    return offlineApi.updateChecklistItem(item.id, {
                         text: item.content,
                         is_completed: item.is_completed
                     });
                 } else {
                     // New item (string ID) -> Create
-                    return api.post(`/notes/${id}/checklist`, {
+                    // Note: If we are editing a note that is itself offline (offline_123),
+                    // createChecklistItem will queue CREATE_CHECKLIST with noteId=offline_123.
+                    // Sync queue will handle dependent ID resolution.
+                    return offlineApi.createChecklistItem(id as string | number, {
                         text: item.content,
                         is_completed: item.is_completed
                     });

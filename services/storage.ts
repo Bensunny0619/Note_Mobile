@@ -17,7 +17,7 @@ export interface CachedNote {
 
 export interface QueuedOperation {
     id: string;
-    type: 'CREATE' | 'UPDATE' | 'DELETE' | 'UPLOAD_IMAGE' | 'CREATE_REMINDER' | 'DELETE_REMINDER' | 'ATTACH_LABEL' | 'DETACH_LABEL' | 'CREATE_CHECKLIST' | 'CREATE_AUDIO' | 'CREATE_DRAWING';
+    type: 'CREATE' | 'UPDATE' | 'DELETE' | 'UPLOAD_IMAGE' | 'DELETE_IMAGE' | 'CREATE_REMINDER' | 'DELETE_REMINDER' | 'ATTACH_LABEL' | 'DETACH_LABEL' | 'CREATE_CHECKLIST' | 'UPDATE_CHECKLIST' | 'DELETE_CHECKLIST' | 'CREATE_AUDIO' | 'DELETE_AUDIO' | 'CREATE_DRAWING' | 'DELETE_DRAWING';
     resourceType: 'note' | 'image' | 'reminder' | 'label' | 'checklist' | 'audio' | 'drawing';
     resourceId: string | number;
     payload: any;

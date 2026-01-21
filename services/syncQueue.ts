@@ -32,8 +32,50 @@ export const processSyncQueue = async (): Promise<SyncResult> => {
     let successful = 0;
     let failed = 0;
     const remainingOperations: QueuedOperation[] = [];
+    const failedNoteCreationIds = new Set<string | number>();
+
+    // 1. Identify all pending Note CREATIONs in the queue
+    const pendingNoteCreations = new Set<string>(
+        queue
+            .filter(op => op.type === 'CREATE' && op.resourceType === 'note')
+            .map(op => op.resourceId as string)
+    );
 
     for (const operation of queue) {
+        // 2. Resolve the Target Note ID for this operation
+        let targetNoteId: string | null = null;
+        if (operation.resourceType === 'note') {
+            targetNoteId = operation.resourceId as string;
+        } else if (operation.payload?.noteId) {
+            targetNoteId = operation.payload.noteId;
+        }
+
+        // 3. Check for ORPHANS: Targeting an offline note that is NOT pending creation
+        // (If the note is not in pendingNoteCreations, and it's an offline_ ID, 
+        //  it means the original CREATE failed max retries or was lost. 
+        //  We must discard this dependent op.)
+
+        // Ensure strictly string for verification
+        const targetNoteIdString = targetNoteId ? String(targetNoteId) : '';
+        const isTargetingOffline = targetNoteIdString.startsWith('offline_');
+
+        // A Note CREATE operation targets itself, so it IS found in pendingNoteCreations.
+        // We only care if we CANT find it.
+        if (isTargetingOffline && !pendingNoteCreations.has(targetNoteIdString)) {
+            console.warn(`🗑️ Discarding orphan operation ${operation.id} (targets missing offline note ${targetNoteId})`);
+            await dequeueOperation(operation.id);
+            failed++;
+            continue;
+        }
+
+        // Check for dependencies on RECENTLY failed note creations (in this run)
+        const dependentNoteId = operation.payload?.noteId || (operation.resourceType === 'note' ? operation.resourceId : null);
+        if (dependentNoteId && failedNoteCreationIds.has(dependentNoteId)) {
+            console.warn(`⏳ Skipping operation ${operation.id} due to failed parent note creation (${dependentNoteId})`);
+            remainingOperations.push(operation);
+            continue;
+        }
+
         try {
             // Skip if max retries exceeded
             if (operation.retryCount >= MAX_RETRIES) {
@@ -49,8 +91,7 @@ export const processSyncQueue = async (): Promise<SyncResult> => {
             // Remove from queue after successful processing
             await dequeueOperation(operation.id);
 
-            // CRITICAL: If we just created a note, the rest of our in-memory 'queue' array is STALE
-            // because processCreate updated the IDs in storage. We MUST restart processing to fetch fresh data.
+            // CRITICAL: restart if ID mapping changed
             if (operation.type === 'CREATE' && operation.resourceType === 'note') {
                 console.log('🔄 Note created, restarting sync queue processing to pick up ID updates...');
                 const recursiveResult = await processSyncQueue();
@@ -67,6 +108,21 @@ export const processSyncQueue = async (): Promise<SyncResult> => {
                 : error.message;
 
             console.error(`❌ Failed to process operation ${operation.id} (${operation.type}):`, errorMsg);
+
+            // STOP retrying if resource is not found (404) on server
+            // This prevents stuck queue when modifying deleted items
+            if (error.response?.status === 404) {
+                console.warn(`🗑️ Target resource not found (404), discarding operation ${operation.id}`);
+                await dequeueOperation(operation.id);
+                failed++;
+                continue;
+            }
+
+            // Track failed note creations to skip dependents
+            if (operation.type === 'CREATE' && operation.resourceType === 'note') {
+                failedNoteCreationIds.add(operation.resourceId);
+            }
+
             if (error.response?.status === 422) {
                 console.error('Validation Errors:', error.response.data.errors);
             }
@@ -123,6 +179,21 @@ const processOperation = async (operation: QueuedOperation): Promise<void> => {
         case 'CREATE_DRAWING':
             await processDrawingCreate(operation);
             break;
+        case 'DELETE_IMAGE':
+            await processImageDelete(operation);
+            break;
+        case 'DELETE_AUDIO':
+            await processAudioDelete(operation);
+            break;
+        case 'DELETE_DRAWING':
+            await processDrawingDelete(operation);
+            break;
+        case 'UPDATE_CHECKLIST':
+            await processChecklistUpdate(operation);
+            break;
+        case 'DELETE_CHECKLIST':
+            await processChecklistDelete(operation);
+            break;
         default:
             throw new Error(`Unknown operation type: ${operation.type}`);
     }
@@ -142,9 +213,7 @@ const processAudioCreate = async (operation: QueuedOperation): Promise<void> => 
         type,
     } as any);
 
-    await api.post(`/notes/${noteId}/audio`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    await api.post(`/notes/${noteId}/audio`, formData);
 
     console.log(`✅ Audio uploaded for note ${noteId}`);
 };
@@ -152,7 +221,12 @@ const processAudioCreate = async (operation: QueuedOperation): Promise<void> => 
 const processDrawingCreate = async (operation: QueuedOperation): Promise<void> => {
     const { noteId, drawing_uri } = operation.payload;
 
+    if (!drawing_uri) {
+        throw new Error("Missing drawing_uri in operation payload");
+    }
+
     // drawing_uri is a file URI from ViewShot.capture()
+    console.log(`PREPARING DRAWING UPLOAD: ${drawing_uri}, ID: ${noteId}`);
     // Extract filename from URI
     const filename = drawing_uri.split('/').pop() || 'drawing.png';
 
@@ -163,11 +237,19 @@ const processDrawingCreate = async (operation: QueuedOperation): Promise<void> =
         type: 'image/png',
     } as any);
 
-    await api.post(`/notes/${noteId}/drawings`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    try {
+        await api.post(`/notes/${noteId}/drawings`, formData);
 
-    console.log(`✅ Drawing uploaded for note ${noteId}`);
+        console.log(`✅ Drawing uploaded for note ${noteId}`);
+    } catch (e: any) {
+        if (e.message === 'Network Error') {
+            console.error('Drawing Upload Config:', {
+                url: `/notes/${noteId}/drawings`,
+                formDataParts: (formData as any)._parts,
+            });
+        }
+        throw e;
+    }
 };
 
 const processCreate = async (operation: QueuedOperation): Promise<void> => {
@@ -176,11 +258,27 @@ const processCreate = async (operation: QueuedOperation): Promise<void> => {
         const serverNote = response.data;
 
         // Update cached note with server ID
+        // Update cached note with server ID
         const tempId = operation.resourceId;
+        const oldCached = await getCachedNoteById(tempId);
         await removeCachedNote(tempId);
+
+        // Preserve local-only fields that haven't been synced yet
+        const mergedData = { ...serverNote };
+        if (oldCached?.data) {
+            if (oldCached.data.drawing_uri) mergedData.drawing_uri = oldCached.data.drawing_uri;
+            if (oldCached.data.audio_uri) mergedData.audio_uri = oldCached.data.audio_uri;
+            // Preserve temp images that might be uploading
+            if (oldCached.data.images && oldCached.data.images.some((img: any) => img.id.toString().startsWith('temp_'))) {
+                const serverImages = serverNote.images || [];
+                const localImages = oldCached.data.images.filter((img: any) => img.id.toString().startsWith('temp_'));
+                mergedData.images = [...serverImages, ...localImages];
+            }
+        }
+
         await updateCachedNote(serverNote.id, {
             id: serverNote.id,
-            data: serverNote,
+            data: mergedData,
             locallyModified: false,
             lastSyncedAt: new Date().toISOString(),
         });
@@ -257,9 +355,7 @@ const processImageUpload = async (operation: QueuedOperation): Promise<void> => 
         type: imageFile.type,
     } as any);
 
-    await api.post(`/notes/${noteId}/images`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    await api.post(`/notes/${noteId}/images`, formData);
 
     console.log(`✅ Image uploaded for note ${noteId}`);
 };
@@ -303,6 +399,49 @@ const processChecklistCreate = async (operation: QueuedOperation): Promise<void>
     await api.post(`/notes/${noteId}/checklist`, { text, is_completed });
 
     console.log(`✅ Checklist item created for note ${noteId}`);
+};
+
+const processChecklistUpdate = async (operation: QueuedOperation): Promise<void> => {
+    const { text, is_completed } = operation.payload;
+    const itemId = operation.resourceId;
+
+    if (itemId && typeof itemId === 'number') {
+        await api.put(`/checklist/${itemId}`, { text, is_completed });
+        console.log(`✅ Checklist item ${itemId} updated`);
+    }
+};
+
+const processChecklistDelete = async (operation: QueuedOperation): Promise<void> => {
+    const { itemId } = operation.payload;
+
+    if (itemId && typeof itemId === 'number') {
+        await api.delete(`/checklist/${itemId}`);
+        console.log(`✅ Checklist item ${itemId} deleted`);
+    }
+};
+
+const processImageDelete = async (operation: QueuedOperation): Promise<void> => {
+    const { imageId } = operation.payload;
+    if (imageId && typeof imageId === 'number') {
+        await api.delete(`/notes/images/${imageId}`);
+        console.log(`✅ Image ${imageId} deleted`);
+    }
+};
+
+const processAudioDelete = async (operation: QueuedOperation): Promise<void> => {
+    const { audioId } = operation.payload;
+    if (audioId && typeof audioId === 'number') {
+        await api.delete(`/notes/audio/${audioId}`);
+        console.log(`✅ Audio ${audioId} deleted`);
+    }
+};
+
+const processDrawingDelete = async (operation: QueuedOperation): Promise<void> => {
+    const { drawingId } = operation.payload;
+    if (drawingId && typeof drawingId === 'number') {
+        await api.delete(`/notes/drawings/${drawingId}`);
+        console.log(`✅ Drawing ${drawingId} deleted`);
+    }
 };
 
 // Manual retry with exponential backoff (not currently used, but available)

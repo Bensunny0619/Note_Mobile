@@ -2,7 +2,7 @@ import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { router } from 'expo-router';
 
-const API_URL = 'http://192.168.0.3:8000/api';
+const API_URL = 'http://192.168.0.4:8000/api';
 // const API_URL = 'http://192.168.1.9:8000/api';
 // const API_URL = 'http://192.168.84.230:8000/api';
 
@@ -12,6 +12,7 @@ const api = axios.create({
         'Content-Type': 'application/json',
         'Accept': 'application/json',
     },
+    timeout: 60000, // 60 seconds timeout for large uploads
 });
 
 // Add a request interceptor to add the token to requests
