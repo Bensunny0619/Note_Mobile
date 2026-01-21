@@ -21,13 +21,45 @@ interface SyncResult {
 }
 
 export const processSyncQueue = async (): Promise<SyncResult> => {
-    const queue = await getSyncQueue();
+    let queue = await getSyncQueue();
 
     if (queue.length === 0) {
         return { successful: 0, failed: 0, remaining: 0 };
     }
 
     console.log(`📤 Processing ${queue.length} queued operations...`);
+
+    // Auto-clear stuck operations (exceeded retries or too old)
+    const now = Date.now();
+    const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+    const initialLength = queue.length;
+
+    queue = queue.filter(op => {
+        // Remove if exceeded retries
+        if (op.retryCount >= MAX_RETRIES) {
+            console.warn(`⚠️ Auto-removing operation ${op.id} (exceeded ${MAX_RETRIES} retries)`);
+            return false;
+        }
+
+        // Remove if too old (stuck for 30+ minutes)
+        const age = now - new Date(op.createdAt).getTime();
+        if (age > MAX_AGE_MS) {
+            console.warn(`⚠️ Auto-removing stale operation ${op.id} (age: ${Math.round(age / 60000)}min)`);
+            return false;
+        }
+
+        return true;
+    });
+
+    // Update queue if we removed anything
+    if (queue.length < initialLength) {
+        await setSyncQueue(queue);
+        console.log(`✅ Auto-cleared ${initialLength - queue.length} stuck operation(s)`);
+    }
+
+    if (queue.length === 0) {
+        return { successful: 0, failed: 0, remaining: 0 };
+    }
 
     let successful = 0;
     let failed = 0;
@@ -46,14 +78,6 @@ export const processSyncQueue = async (): Promise<SyncResult> => {
     const dependentOps: Map<string | number, QueuedOperation[]> = new Map();
 
     for (const operation of queue) {
-        // Skip if max retries exceeded
-        if (operation.retryCount >= MAX_RETRIES) {
-            console.warn(`⚠️ Operation ${operation.id} exceeded max retries, dropping from queue`);
-            await dequeueOperation(operation.id);
-            failed++;
-            continue;
-        }
-
         // 2. Resolve the Target Note ID for this operation
         let targetNoteId: string | null = null;
         if (operation.resourceType === 'note') {
@@ -299,17 +323,26 @@ const processDrawingCreate = async (operation: QueuedOperation): Promise<void> =
 
     // drawing_uri is a file URI from ViewShot.capture()
     console.log(`PREPARING DRAWING UPLOAD: ${drawing_uri}, ID: ${noteId}`);
-    // Extract filename from URI
-    const filename = drawing_uri.split('/').pop() || 'drawing.png';
-
-    const formData = new FormData();
-    formData.append('drawing', {
-        uri: drawing_uri,
-        name: filename,
-        type: 'image/png',
-    } as any);
 
     try {
+        // First, verify the file exists using expo-file-system
+        const FileSystem = await import('expo-file-system');
+        const fileInfo = await FileSystem.getInfoAsync(drawing_uri);
+
+        console.log(`📁 File info:`, {
+            exists: fileInfo.exists,
+            uri: fileInfo.uri,
+            size: fileInfo.exists ? (fileInfo as any).size : 0,
+            isDirectory: fileInfo.isDirectory,
+        });
+
+        if (!fileInfo.exists) {
+            throw new Error(`Drawing file does not exist at ${drawing_uri}`);
+        }
+
+        // Extract filename from URI
+        const filename = drawing_uri.split('/').pop() || 'drawing.png';
+
         // Use fetch instead of axios for proper FormData handling in React Native
         const token = await import('expo-secure-store').then(m => m.getItemAsync('auth_token'));
 
@@ -317,7 +350,17 @@ const processDrawingCreate = async (operation: QueuedOperation): Promise<void> =
             url: `${api.defaults.baseURL}/notes/${noteId}/drawings`,
             filename,
             uri: drawing_uri,
+            fileSize: (fileInfo as any).size,
         });
+
+        // For React Native, we need to use the file URI directly in FormData
+        // The URI should work if it's from expo-file-system cache
+        const formData = new FormData();
+        formData.append('drawing', {
+            uri: drawing_uri,
+            name: filename,
+            type: 'image/png',
+        } as any);
 
         const response = await fetch(`${api.defaults.baseURL}/notes/${noteId}/drawings`, {
             method: 'POST',
@@ -339,12 +382,10 @@ const processDrawingCreate = async (operation: QueuedOperation): Promise<void> =
 
         console.log(`✅ Drawing uploaded for note ${noteId}`);
     } catch (error: any) {
-        console.error(`Drawing upload error for note ${noteId}:`, {
-            message: error.message || 'Unknown error',
-            name: error.name || 'Unknown',
-            type: typeof error,
-            errorString: String(error),
-            stack: error.stack?.substring(0, 300),
+        console.error(`❌ Drawing upload error for note ${noteId}:`, {
+            message: error.message,
+            name: error.name,
+            uri: drawing_uri,
         });
 
         // Re-throw with more context

@@ -10,7 +10,10 @@ import {
     StyleSheet,
     KeyboardAvoidingView,
     Platform,
-    Image
+    Image,
+    Modal,
+    TouchableWithoutFeedback,
+    Share
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -198,19 +201,73 @@ export default function CreateNote() {
         setChecklistItems(checklistItems.filter(item => item.id !== id));
     };
 
+    const [isAttachmentMenuVisible, setIsAttachmentMenuVisible] = useState(false);
+    const [isOptionsMenuVisible, setIsOptionsMenuVisible] = useState(false);
+
     const handleToolbarAdd = () => {
-        Alert.alert(
-            'Add Attachment',
-            'Choose what you want to add',
-            [
-                { text: 'Take Photo', onPress: () => ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.7 }).then(r => { if (!r.canceled && r.assets[0].uri) setSelectedImages([...selectedImages, r.assets[0].uri]); }) },
-                { text: 'Choose Image', onPress: pickImage },
-                { text: 'Drawing', onPress: () => { setDrawingUri(null); drawingCanvasRef.current?.open(); } },
-                { text: 'Recording', onPress: () => { /* Audio recorder is auto-visible if empty, maybe scroll to it? */ } },
-                { text: 'Checkboxes', onPress: () => { if (checklistItems.length === 0) setChecklistItems([{ id: Date.now().toString(), content: '', is_completed: false }]); } },
-                { text: 'Cancel', style: 'cancel' }
-            ]
-        );
+        setIsAttachmentMenuVisible(true);
+    };
+
+    const handleOptionsOpen = () => {
+        setIsOptionsMenuVisible(true);
+    };
+
+    const closeMenus = () => {
+        setIsAttachmentMenuVisible(false);
+        setIsOptionsMenuVisible(false);
+    };
+
+    const handleOptionAction = (action: () => void) => {
+        closeMenus();
+        // Small delay to allow modal to close smoothly before action
+        setTimeout(action, 100);
+    };
+
+    const handleMakeCopy = async () => {
+        setLoading(true);
+        try {
+            // Create a new note with same content
+            const notePayload = {
+                title: `${title} (Copy)`,
+                content,
+                color,
+                label_ids: selectedLabelIds,
+                repeat: repeatFrequency !== 'none' ? repeatFrequency : null,
+                audio_uri: audioUri, // Note: This might reference same file, ideally copy file too but mostly fine for local
+                drawing_uri: drawingUri,
+            };
+
+            await offlineApi.createNote(notePayload);
+            if (isOnline) triggerSync();
+            Alert.alert('Success', 'Note copied successfully');
+        } catch (error) {
+            Alert.alert('Error', 'Failed to copy note');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleShare = async () => {
+        try {
+            let shareMessage = `${title}\n\n`;
+            if (content) {
+                shareMessage += `${content}\n\n`;
+            }
+
+            if (checklistItems.length > 0) {
+                const checklistText = checklistItems
+                    .map(item => `${item.is_completed ? '☑' : '☐'} ${item.content}`)
+                    .join('\n');
+                shareMessage += `Checklist:\n${checklistText}\n\n`;
+            }
+
+            await Share.share({
+                message: shareMessage.trim(),
+                title: title
+            });
+        } catch (error) {
+            console.error('Share error:', error);
+        }
     };
 
     return (
@@ -531,10 +588,115 @@ export default function CreateNote() {
                     Edited {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </Text>
 
-                <TouchableOpacity style={styles.toolbarAction} onPress={() => {/* More options */ }}>
+                <TouchableOpacity style={styles.toolbarAction} onPress={handleOptionsOpen}>
                     <Feather name="more-vertical" size={24} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
                 </TouchableOpacity>
             </View>
+
+            {/* Attachment Menu Modal */}
+            <Modal
+                visible={isAttachmentMenuVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={closeMenus}
+            >
+                <TouchableWithoutFeedback onPress={closeMenus}>
+                    <View style={styles.modalOverlay}>
+                        <TouchableWithoutFeedback>
+                            <View style={[styles.menuContent, isDarkMode && styles.menuContentDark]}>
+                                <View style={styles.menuHeader}>
+                                    <View style={[styles.menuHandle, isDarkMode && styles.menuHandleDark]} />
+                                    <Text style={[styles.menuTitle, isDarkMode && styles.textDark]}>Add Attachment</Text>
+                                </View>
+                                <View style={styles.gridOptions}>
+                                    <TouchableOpacity style={styles.gridItem} onPress={() => handleOptionAction(() => ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.7 }).then(r => { if (!r.canceled && r.assets[0].uri) setSelectedImages([...selectedImages, r.assets[0].uri]); }))}>
+                                        <View style={[styles.gridIcon, { backgroundColor: '#EEF2FF' }]}>
+                                            <Feather name="camera" size={24} color="#6366f1" />
+                                        </View>
+                                        <Text style={[styles.gridLabel, isDarkMode && styles.textDark]}>Take photo</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.gridItem} onPress={() => handleOptionAction(pickImage)}>
+                                        <View style={[styles.gridIcon, { backgroundColor: '#F0FDF4' }]}>
+                                            <Feather name="image" size={24} color="#22C55E" />
+                                        </View>
+                                        <Text style={[styles.gridLabel, isDarkMode && styles.textDark]}>Image</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.gridItem} onPress={() => handleOptionAction(() => { setDrawingUri(null); drawingCanvasRef.current?.open(); })}>
+                                        <View style={[styles.gridIcon, { backgroundColor: '#FEF2F2' }]}>
+                                            <Feather name="edit-3" size={24} color="#EF4444" />
+                                        </View>
+                                        <Text style={[styles.gridLabel, isDarkMode && styles.textDark]}>Drawing</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.gridItem} onPress={() => handleOptionAction(() => { /* Scroll to audio? */ })}>
+                                        <View style={[styles.gridIcon, { backgroundColor: '#FFF7ED' }]}>
+                                            <Feather name="mic" size={24} color="#F97316" />
+                                        </View>
+                                        <Text style={[styles.gridLabel, isDarkMode && styles.textDark]}>Recording</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.gridItem} onPress={() => handleOptionAction(() => { if (checklistItems.length === 0) setChecklistItems([{ id: Date.now().toString(), content: '', is_completed: false }]); })}>
+                                        <View style={[styles.gridIcon, { backgroundColor: '#F3F4F6' }]}>
+                                            <Feather name="check-square" size={24} color="#4B5563" />
+                                        </View>
+                                        <Text style={[styles.gridLabel, isDarkMode && styles.textDark]}>Tick boxes</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+
+            {/* Options Menu Modal (3-dots) */}
+            <Modal
+                visible={isOptionsMenuVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={closeMenus}
+            >
+                <TouchableWithoutFeedback onPress={closeMenus}>
+                    <View style={styles.modalOverlay}>
+                        <TouchableWithoutFeedback>
+                            <View style={[styles.menuContent, isDarkMode && styles.menuContentDark]}>
+                                <View style={styles.menuHeader}>
+                                    <View style={[styles.menuHandle, isDarkMode && styles.menuHandleDark]} />
+                                </View>
+
+                                <ScrollView contentContainerStyle={styles.listOptions}>
+                                    <TouchableOpacity style={styles.menuItem} onPress={() => handleOptionAction(router.back)}>
+                                        <Feather name="trash-2" size={20} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>Delete</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={() => handleOptionAction(handleMakeCopy)}>
+                                        <Feather name="copy" size={20} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>Make a copy</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={() => handleOptionAction(handleShare)}>
+                                        <Feather name="share-2" size={20} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>Send</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={() => handleOptionAction(() => Alert.alert('Collaborator', 'Coming soon!'))}>
+                                        <Feather name="user-plus" size={20} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>Collaborator</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={() => handleOptionAction(() => { /* Focus labels or scroll */ })}>
+                                        <MaterialIcons name="label-outline" size={20} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>Labels</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity style={styles.menuItem} onPress={() => handleOptionAction(() => Alert.alert('Help', 'Contact support at support@homanotes.com'))}>
+                                        <Feather name="help-circle" size={20} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                                        <Text style={[styles.menuItemText, isDarkMode && styles.menuItemTextDark]}>Help & feedback</Text>
+                                    </TouchableOpacity>
+                                </ScrollView>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
         </SafeAreaView >
     );
 }
@@ -890,6 +1052,90 @@ const styles = StyleSheet.create({
     },
     textDarkSecondary: {
         color: '#94a3b8',
+    },
+    // Modal Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
+    },
+    menuContent: {
+        backgroundColor: '#FFFFFF',
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        paddingBottom: 30,
+        maxHeight: '60%',
+    },
+    menuContentDark: {
+        backgroundColor: '#1E293B',
+    },
+    menuHeader: {
+        alignItems: 'center',
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4F6',
+        marginBottom: 8,
+    },
+    menuHandle: {
+        width: 40,
+        height: 4,
+        backgroundColor: '#E5E7EB',
+        borderRadius: 2,
+        marginBottom: 8,
+    },
+    menuHandleDark: {
+        backgroundColor: '#475569',
+    },
+    menuTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#374151',
+    },
+    gridOptions: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        paddingHorizontal: 16,
+        paddingTop: 16,
+    },
+    gridItem: {
+        width: '25%',
+        alignItems: 'center',
+        marginBottom: 24,
+    },
+    gridIcon: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.05)',
+    },
+    gridLabel: {
+        fontSize: 12,
+        color: '#4B5563',
+        textAlign: 'center',
+        fontWeight: '500',
+    },
+    listOptions: {
+        paddingHorizontal: 8,
+        paddingBottom: 20,
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+    },
+    menuItemText: {
+        fontSize: 16,
+        color: '#374151',
+        marginLeft: 16,
+        fontWeight: '500',
+    },
+    menuItemTextDark: {
+        color: '#E2E8F0',
     },
 });
 

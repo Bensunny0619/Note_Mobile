@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { DrawerContentScrollView, DrawerItem } from '@react-navigation/drawer';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useRouter, usePathname } from 'expo-router';
@@ -26,7 +26,12 @@ export default function CustomDrawerContent(props: any) {
     return (
         <View style={[styles.container, isDarkMode && styles.containerDark]}>
             <View style={styles.header}>
-                <Text style={[styles.appName, isDarkMode && styles.textDark]}>Google Keep Clone</Text>
+                <Image
+                    source={require('../assets/images/icon.png')}
+                    style={styles.logo}
+                    resizeMode="contain"
+                />
+                <Text style={[styles.appName, isDarkMode && styles.textDark]}>Homa Notes</Text>
             </View>
 
             <DrawerContentScrollView {...props} contentContainerStyle={styles.scrollContent}>
@@ -136,6 +141,13 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
         paddingTop: 60,
         paddingBottom: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    logo: {
+        width: 32,
+        height: 32,
     },
     appName: {
         fontSize: 22,

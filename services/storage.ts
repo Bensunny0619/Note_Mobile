@@ -160,3 +160,45 @@ export const clearAllCache = async (): Promise<void> => {
         console.error('Failed to clear cache:', error);
     }
 };
+
+// Clear stuck drawing operations from sync queue
+export const clearStuckDrawings = async (): Promise<number> => {
+    try {
+        const queue = await getSyncQueue();
+        const originalLength = queue.length;
+
+        // Remove all CREATE_DRAWING and DELETE_DRAWING operations
+        const filtered = queue.filter(op =>
+            op.type !== 'CREATE_DRAWING' && op.type !== 'DELETE_DRAWING'
+        );
+
+        await setSyncQueue(filtered);
+        const removed = originalLength - filtered.length;
+
+        console.log(`✅ Cleared ${removed} stuck drawing operation(s)`);
+        return removed;
+    } catch (error) {
+        console.error('Failed to clear stuck drawings:', error);
+        return 0;
+    }
+};
+
+// Clear all failed operations (retry count >= MAX_RETRIES)
+export const clearFailedOperations = async (): Promise<number> => {
+    try {
+        const queue = await getSyncQueue();
+        const originalLength = queue.length;
+
+        // Remove operations that have failed too many times
+        const filtered = queue.filter(op => op.retryCount < 3);
+
+        await setSyncQueue(filtered);
+        const removed = originalLength - filtered.length;
+
+        console.log(`✅ Cleared ${removed} failed operation(s)`);
+        return removed;
+    } catch (error) {
+        console.error('Failed to clear failed operations:', error);
+        return 0;
+    }
+};
