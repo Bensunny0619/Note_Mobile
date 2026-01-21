@@ -79,7 +79,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             setToken(token);
             setUser(newUser);
 
-            router.replace('/(tabs)');
+            router.replace('/(drawer)');
         } catch (e) {
             console.error('Login error', e);
             throw e;

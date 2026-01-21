@@ -14,24 +14,25 @@ export default function CustomDrawerContent(props: any) {
 
     const menuItems = [
         { label: 'Notes', icon: 'lightbulb-outline', route: '/(drawer)', type: 'material' },
-        { label: 'Reminders', icon: 'bell', route: '/reminders', type: 'feather' },
+        { label: 'Reminders', icon: 'bell', route: '/(drawer)/reminders', type: 'feather' },
     ];
 
     const lowerItems = [
-        { label: 'Archive', icon: 'archive', route: '/archive', type: 'feather' },
-        { label: 'Trash', icon: 'trash-2', route: '/trash', type: 'feather' },
-        { label: 'Settings', icon: 'settings', route: '/settings', type: 'feather' }, // Assuming settings is in tabs or separate route
+        { label: 'Archive', icon: 'archive', route: '/(drawer)/archive', type: 'feather' },
+        { label: 'Trash', icon: 'trash-2', route: '/(drawer)/trash', type: 'feather' },
+        { label: 'Settings', icon: 'settings', route: '/(drawer)/settings', type: 'feather' },
     ];
 
     return (
         <View style={[styles.container, isDarkMode && styles.containerDark]}>
-            <View style={styles.header}>
-                <Image
-                    source={require('../assets/images/icon.png')}
-                    style={styles.logo}
-                    resizeMode="contain"
-                />
-                <Text style={[styles.appName, isDarkMode && styles.textDark]}>Homa Notes</Text>
+            <View style={[styles.header, isDarkMode && styles.headerDark]}>
+                <View style={styles.brandingContainer}>
+                    <View style={styles.logoContainer}>
+                        <Text style={[styles.logoText, isDarkMode && styles.logoTextDark]}>Homa</Text>
+                        <View style={styles.logoDot} />
+                    </View>
+                    <Text style={[styles.tagline, isDarkMode && styles.taglineDark]}>Notes</Text>
+                </View>
             </View>
 
             <DrawerContentScrollView {...props} contentContainerStyle={styles.scrollContent}>
@@ -72,7 +73,7 @@ export default function CustomDrawerContent(props: any) {
 
                 <View style={styles.sectionHeader}>
                     <Text style={[styles.sectionTitle, isDarkMode && styles.textDark]}>LABELS</Text>
-                    <TouchableOpacity style={styles.editBtn}>
+                    <TouchableOpacity style={styles.editBtn} onPress={() => router.push('/(drawer)/labels')}>
                         <Text style={[styles.editBtnText, isDarkMode && styles.textDarkSecondary]}>Edit</Text>
                     </TouchableOpacity>
                 </View>
@@ -92,7 +93,7 @@ export default function CustomDrawerContent(props: any) {
                         <Text style={[styles.itemLabel, isDarkMode && styles.textDark]}>{label.name}</Text>
                     </TouchableOpacity>
                 ))}
-                <TouchableOpacity style={styles.drawerItem} onPress={() => {/* Create new label logic */ }}>
+                <TouchableOpacity style={styles.drawerItem} onPress={() => router.push('/(drawer)/labels')}>
                     <Feather name="plus" size={24} color={isDarkMode ? '#94a3b8' : '#5f6368'} />
                     <Text style={[styles.itemLabel, isDarkMode && styles.textDark]}>Create new label</Text>
                 </TouchableOpacity>
@@ -138,21 +139,48 @@ const styles = StyleSheet.create({
         backgroundColor: '#1e293b',
     },
     header: {
-        paddingHorizontal: 24,
-        paddingTop: 60,
-        paddingBottom: 20,
+        paddingHorizontal: 20,
+        paddingTop: 50,
+        paddingBottom: 24,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E5E7EB',
+    },
+    headerDark: {
+        borderBottomColor: '#334155',
+    },
+    brandingContainer: {
+        // Container for the entire branding section
+    },
+    logoContainer: {
         flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
+        alignItems: 'baseline',
+        marginBottom: 4,
     },
-    logo: {
-        width: 32,
-        height: 32,
+    logoText: {
+        fontSize: 32,
+        fontWeight: '700',
+        color: '#1F2937',
+        letterSpacing: -0.5,
     },
-    appName: {
-        fontSize: 22,
-        fontWeight: 'bold',
-        color: '#5f6368',
+    logoTextDark: {
+        color: '#f8fafc',
+    },
+    logoDot: {
+        width: 8,
+        height: 8,
+        backgroundColor: '#6366f1',
+        borderRadius: 4,
+        marginLeft: 2,
+        marginBottom: 4,
+    },
+    tagline: {
+        fontSize: 13,
+        color: '#6B7280',
+        fontWeight: '500',
+        letterSpacing: 0.3,
+    },
+    taglineDark: {
+        color: '#94a3b8',
     },
     scrollContent: {
         paddingTop: 0,
