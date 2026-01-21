@@ -42,7 +42,7 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({ child
             clearTimeout(syncTimeout);
         }
 
-        // Debounce sync calls - wait 500ms before actually syncing
+        // Debounce sync calls - wait 100ms before actually syncing
         // This prevents rapid successive syncs when user makes multiple changes
         const timeout = setTimeout(async () => {
             setIsSyncing(true);
@@ -61,7 +61,7 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({ child
             } finally {
                 setIsSyncing(false);
             }
-        }, 500);
+        }, 100); // Reduced from 200ms for faster response
 
         setSyncTimeout(timeout);
     }, [isOnline, isSyncing, syncTimeout]);

@@ -82,7 +82,7 @@ export default function NotesScreen() {
     useEffect(() => {
         fetchNotes();
         // lastSync added to trigger refetch on real-time updates or sync completion
-    }, [fetchNotes, lastSync]);
+    }, [fetchNotes]);
 
     useFocusEffect(
         useCallback(() => {
@@ -233,9 +233,9 @@ export default function NotesScreen() {
                 </View>
 
                 {/* Audio Recordings Preview */}
-                {(item.audio_recordings?.length > 0 || item.audio_uri) && (
+                {((item.audio_recordings && item.audio_recordings.length > 0) || item.audio_uri) && (
                     <View style={styles.audioPreviewContainer}>
-                        {(item.audio_recordings?.length > 0 ? item.audio_recordings : [{ id: 'local', uri: item.audio_uri }]).slice(0, 1).map((audio: any) => {
+                        {((item.audio_recordings && item.audio_recordings.length > 0) ? item.audio_recordings : [{ id: 'local', uri: item.audio_uri }]).slice(0, 1).map((audio: any) => {
                             const audioUri = audio.audio_url || audio.file_url || audio.uri;
                             const isThisPlaying = isPlaying && currentUri === audioUri;
                             return (

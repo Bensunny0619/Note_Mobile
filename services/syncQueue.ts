@@ -31,17 +31,29 @@ export const processSyncQueue = async (): Promise<SyncResult> => {
 
     let successful = 0;
     let failed = 0;
-    const remainingOperations: QueuedOperation[] = [];
     const failedNoteCreationIds = new Set<string | number>();
 
-    // 1. Identify all pending Note CREATIONs in the queue
+    // Identify all pending Note CREATIONs in the queue
     const pendingNoteCreations = new Set<string>(
         queue
             .filter(op => op.type === 'CREATE' && op.resourceType === 'note')
             .map(op => op.resourceId as string)
     );
 
+    // Group operations by dependency
+    const noteCreations: QueuedOperation[] = [];
+    const independentOps: QueuedOperation[] = [];
+    const dependentOps: Map<string | number, QueuedOperation[]> = new Map();
+
     for (const operation of queue) {
+        // Skip if max retries exceeded
+        if (operation.retryCount >= MAX_RETRIES) {
+            console.warn(`⚠️ Operation ${operation.id} exceeded max retries, dropping from queue`);
+            await dequeueOperation(operation.id);
+            failed++;
+            continue;
+        }
+
         // 2. Resolve the Target Note ID for this operation
         let targetNoteId: string | null = null;
         if (operation.resourceType === 'note') {
@@ -68,70 +80,89 @@ export const processSyncQueue = async (): Promise<SyncResult> => {
             continue;
         }
 
-        // Check for dependencies on RECENTLY failed note creations (in this run)
-        const dependentNoteId = operation.payload?.noteId || (operation.resourceType === 'note' ? operation.resourceId : null);
-        if (dependentNoteId && failedNoteCreationIds.has(dependentNoteId)) {
-            console.warn(`⏳ Skipping operation ${operation.id} due to failed parent note creation (${dependentNoteId})`);
-            remainingOperations.push(operation);
-            continue;
-        }
-
-        try {
-            // Skip if max retries exceeded
-            if (operation.retryCount >= MAX_RETRIES) {
-                console.warn(`⚠️ Operation ${operation.id} exceeded max retries, dropping from queue`);
-                await dequeueOperation(operation.id);
-                failed++;
-                continue;
+        if (operation.type === 'CREATE' && operation.resourceType === 'note') {
+            noteCreations.push(operation);
+        } else if (typeof operation.resourceId === 'string' && operation.resourceId.startsWith('offline_')) {
+            // Dependent on note creation
+            if (!dependentOps.has(operation.resourceId)) {
+                dependentOps.set(operation.resourceId, []);
             }
+            dependentOps.get(operation.resourceId)!.push(operation);
+        } else if (operation.payload?.noteId && String(operation.payload.noteId).startsWith('offline_')) {
+            // Also dependent if payload contains an offline noteId
+            const dependentOnId = String(operation.payload.noteId);
+            if (!dependentOps.has(dependentOnId)) {
+                dependentOps.set(dependentOnId, []);
+            }
+            dependentOps.get(dependentOnId)!.push(operation);
+        }
+        else {
+            // Independent operation
+            independentOps.push(operation);
+        }
+    }
 
+    // Process note creations first (must be sequential for ID mapping)
+    for (const operation of noteCreations) {
+        try {
+            const oldId = operation.resourceId;
             await processOperation(operation);
             successful++;
-
-            // Remove from queue after successful processing
             await dequeueOperation(operation.id);
 
-            // CRITICAL: restart if ID mapping changed
-            if (operation.type === 'CREATE' && operation.resourceType === 'note') {
-                console.log('🔄 Note created, restarting sync queue processing to pick up ID updates...');
-                const recursiveResult = await processSyncQueue();
-                return {
-                    successful: successful + recursiveResult.successful,
-                    failed: failed + recursiveResult.failed,
-                    remaining: recursiveResult.remaining
-                };
+            // Process dependent operations immediately after note creation
+            const deps = dependentOps.get(oldId) || [];
+            for (const depOp of deps) {
+                try {
+                    await processOperation(depOp);
+                    successful++;
+                    await dequeueOperation(depOp.id);
+                } catch (error: any) {
+                    await handleOperationError(depOp, error);
+                    failed++;
+                }
             }
-
+            dependentOps.delete(oldId);
         } catch (error: any) {
-            const errorMsg = error.response?.data
-                ? JSON.stringify(error.response.data)
-                : error.message;
-
-            console.error(`❌ Failed to process operation ${operation.id} (${operation.type}):`, errorMsg);
-
-            // STOP retrying if resource is not found (404) on server
-            // This prevents stuck queue when modifying deleted items
-            if (error.response?.status === 404) {
-                console.warn(`🗑️ Target resource not found (404), discarding operation ${operation.id}`);
-                await dequeueOperation(operation.id);
-                failed++;
-                continue;
-            }
-
-            // Track failed note creations to skip dependents
-            if (operation.type === 'CREATE' && operation.resourceType === 'note') {
-                failedNoteCreationIds.add(operation.resourceId);
-            }
-
-            if (error.response?.status === 422) {
-                console.error('Validation Errors:', error.response.data.errors);
-            }
-
-            // Update retry count and keep in queue
-            await updateOperationRetry(operation.id, errorMsg);
-            remainingOperations.push(operation);
+            await handleOperationError(operation, error);
+            failedNoteCreationIds.add(operation.resourceId);
             failed++;
+
+            // Skip dependent operations if note creation failed
+            const deps = dependentOps.get(operation.resourceId) || [];
+            for (const depOp of deps) {
+                console.warn(`⏭️ Skipping dependent operation ${depOp.id} due to failed note creation`);
+                await dequeueOperation(depOp.id);
+                failed++;
+            }
+            dependentOps.delete(operation.resourceId);
         }
+    }
+
+    // Process independent operations in parallel (batches of 20)
+    const BATCH_SIZE = 20; // Increased from 5 for faster sync
+    for (let i = 0; i < independentOps.length; i += BATCH_SIZE) {
+        const batch = independentOps.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(
+            batch.map(async (op) => {
+                try {
+                    await processOperation(op);
+                    await dequeueOperation(op.id);
+                    return { success: true };
+                } catch (error: any) {
+                    await handleOperationError(op, error);
+                    return { success: false };
+                }
+            })
+        );
+
+        results.forEach(result => {
+            if (result.status === 'fulfilled' && result.value.success) {
+                successful++;
+            } else {
+                failed++;
+            }
+        });
     }
 
     // Update last sync time if any operations were successful
@@ -139,7 +170,31 @@ export const processSyncQueue = async (): Promise<SyncResult> => {
         await setLastSyncTime(new Date().toISOString());
     }
 
-    return { successful, failed, remaining: remainingOperations.length };
+    const remaining = await getSyncQueue();
+    return { successful, failed, remaining: remaining.length };
+};
+
+// Helper function to handle operation errors
+const handleOperationError = async (operation: QueuedOperation, error: any): Promise<void> => {
+    const errorMsg = error.response?.data
+        ? JSON.stringify(error.response.data)
+        : error.message;
+
+    console.error(`❌ Failed to process operation ${operation.id} (${operation.type}):`, errorMsg);
+
+    // STOP retrying if resource is not found (404) on server
+    if (error.response?.status === 404) {
+        console.warn(`🗑️ Target resource not found (404), discarding operation ${operation.id}`);
+        await dequeueOperation(operation.id);
+        return;
+    }
+
+    if (error.response?.status === 422) {
+        console.error('Validation Errors:', error.response.data.errors);
+    }
+
+    // Update retry count and keep in queue
+    await updateOperationRetry(operation.id, errorMsg);
 };
 
 const processOperation = async (operation: QueuedOperation): Promise<void> => {
@@ -200,20 +255,37 @@ const processOperation = async (operation: QueuedOperation): Promise<void> => {
 };
 
 const processAudioCreate = async (operation: QueuedOperation): Promise<void> => {
-    const { noteId, audio_uri } = operation.payload;
+    const { noteId, audioFile } = operation.payload;
+
+    if (!audioFile || !audioFile.uri) {
+        throw new Error("Missing audioFile in operation payload");
+    }
+
+    console.log(`PREPARING AUDIO UPLOAD: ${audioFile.uri}, ID: ${noteId}`);
 
     const formData = new FormData();
-    const filename = audio_uri.split('/').pop() || 'recording.m4a';
-    const match = /\.(\w+)$/.exec(filename);
-    const type = match ? `audio/${match[1]}` : `audio/m4a`;
-
     formData.append('audio', {
-        uri: audio_uri,
-        name: filename,
-        type,
+        uri: audioFile.uri,
+        name: audioFile.name,
+        type: audioFile.type,
     } as any);
 
-    await api.post(`/notes/${noteId}/audio`, formData);
+    // Use fetch instead of axios for proper FormData handling in React Native
+    const token = await import('expo-secure-store').then(m => m.getItemAsync('auth_token'));
+    const response = await fetch(`${api.defaults.baseURL}/notes/${noteId}/audio`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json',
+            // Don't set Content-Type - let fetch set it with boundary
+        },
+        body: formData,
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(JSON.stringify(error));
+    }
 
     console.log(`✅ Audio uploaded for note ${noteId}`);
 };
@@ -238,17 +310,47 @@ const processDrawingCreate = async (operation: QueuedOperation): Promise<void> =
     } as any);
 
     try {
-        await api.post(`/notes/${noteId}/drawings`, formData);
+        // Use fetch instead of axios for proper FormData handling in React Native
+        const token = await import('expo-secure-store').then(m => m.getItemAsync('auth_token'));
+
+        console.log(`🔍 Drawing upload details:`, {
+            url: `${api.defaults.baseURL}/notes/${noteId}/drawings`,
+            filename,
+            uri: drawing_uri,
+        });
+
+        const response = await fetch(`${api.defaults.baseURL}/notes/${noteId}/drawings`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/json',
+                // Don't set Content-Type - let fetch set it with boundary
+            },
+            body: formData,
+        });
+
+        console.log(`📡 Drawing upload response status: ${response.status}`);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`❌ Drawing upload failed with status ${response.status}:`, errorText);
+            throw new Error(errorText || `HTTP ${response.status}`);
+        }
 
         console.log(`✅ Drawing uploaded for note ${noteId}`);
-    } catch (e: any) {
-        if (e.message === 'Network Error') {
-            console.error('Drawing Upload Config:', {
-                url: `/notes/${noteId}/drawings`,
-                formDataParts: (formData as any)._parts,
-            });
-        }
-        throw e;
+    } catch (error: any) {
+        console.error(`Drawing upload error for note ${noteId}:`, {
+            message: error.message || 'Unknown error',
+            name: error.name || 'Unknown',
+            type: typeof error,
+            errorString: String(error),
+            stack: error.stack?.substring(0, 300),
+        });
+
+        // Re-throw with more context
+        const enhancedError = new Error(`Drawing upload failed: ${error.message || 'Network request failed'}`);
+        (enhancedError as any).originalError = error;
+        throw enhancedError;
     }
 };
 
@@ -355,7 +457,21 @@ const processImageUpload = async (operation: QueuedOperation): Promise<void> => 
         type: imageFile.type,
     } as any);
 
-    await api.post(`/notes/${noteId}/images`, formData);
+    // Use fetch instead of axios for proper FormData handling in React Native
+    const token = await import('expo-secure-store').then(m => m.getItemAsync('auth_token'));
+    const response = await fetch(`${api.defaults.baseURL}/notes/${noteId}/images`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json',
+        },
+        body: formData,
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(JSON.stringify(error));
+    }
 
     console.log(`✅ Image uploaded for note ${noteId}`);
 };

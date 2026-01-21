@@ -170,11 +170,22 @@ export const createNote = async (payload: any): Promise<any> => {
 
     // 2. Enqueue Audio Upload if present
     if (audio_uri) {
+        // Construct complete file object like images do
+        const filename = audio_uri.split('/').pop() || 'recording.m4a';
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `audio/${match[1]}` : `audio/m4a`;
+
+        const audioFile = {
+            uri: audio_uri,
+            name: filename,
+            type: type
+        };
+
         await enqueueOperation({
             type: 'CREATE_AUDIO',
             resourceType: 'audio',
             resourceId: tempId,
-            payload: { noteId: tempId, audio_uri },
+            payload: { noteId: tempId, audioFile },
         });
         console.log('🎤 Audio upload queued for note:', tempId);
     }
@@ -351,11 +362,22 @@ export const deleteImage = async (imageId: number | string): Promise<void> => {
 
 // Audio operations
 export const createAudio = async (noteId: string | number, audioUri: string): Promise<void> => {
+    // Construct complete file object like images do
+    const filename = audioUri.split('/').pop() || 'recording.m4a';
+    const match = /\.(\w+)$/.exec(filename);
+    const type = match ? `audio/${match[1]}` : `audio/m4a`;
+
+    const audioFile = {
+        uri: audioUri,
+        name: filename,
+        type: type
+    };
+
     await enqueueOperation({
         type: 'CREATE_AUDIO',
         resourceType: 'audio',
         resourceId: noteId,
-        payload: { noteId, audio_uri: audioUri },
+        payload: { noteId, audioFile },
     });
     console.log('🎤 Audio upload queued for note:', noteId);
 };

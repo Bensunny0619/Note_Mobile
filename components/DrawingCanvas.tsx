@@ -5,6 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import * as FileSystem from 'expo-file-system/legacy';
 import { PanGestureHandler, GestureHandlerRootView, State } from 'react-native-gesture-handler';
+import { captureRef } from 'react-native-view-shot';
 
 type DrawingCanvasProps = {
     onDrawingSaved: (imageUri: string) => void;
@@ -28,6 +29,7 @@ const COLORS = ['#000000', '#EF4444', '#3B82F6', '#10B981', '#F59E0B', '#8B5CF6'
 const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ onDrawingSaved, onDrawingDeleted, existingDrawing, initialOpen }, ref) => {
     const { isDarkMode } = useTheme();
     const [isDrawingMode, setIsDrawingMode] = useState(initialOpen || false);
+    const canvasRef = useRef<View>(null);
     const [paths, setPaths] = useState<PathData[]>([]);
     const [currentPath, setCurrentPath] = useState<SkPath | null>(null);
     const [selectedColor, setSelectedColor] = useState('#000000');
@@ -81,9 +83,33 @@ const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ onDraw
     };
 
     const handleSave = async () => {
-        setIsDrawingMode(false);
-        const dummyUri = `${FileSystem.cacheDirectory}drawing_${Date.now()}.png`;
-        onDrawingSaved(dummyUri);
+        try {
+            // Capture the actual canvas to an image file
+            const uri = `${FileSystem.cacheDirectory}drawing_${Date.now()}.png`;
+
+            // Use ViewShot to capture the canvas
+            if (canvasRef.current) {
+                const capturedUri = await captureRef(canvasRef, {
+                    format: 'png',
+                    quality: 0.9,
+                    result: 'tmpfile',
+                });
+
+                console.log('✅ Drawing captured:', capturedUri);
+                setIsDrawingMode(false);
+                onDrawingSaved(capturedUri);
+            } else {
+                console.warn('⚠️ Canvas ref not available, using fallback');
+                setIsDrawingMode(false);
+                onDrawingSaved(uri);
+            }
+        } catch (error) {
+            console.error('❌ Failed to capture drawing:', error);
+            // Fallback to dummy URI if capture fails
+            const dummyUri = `${FileSystem.cacheDirectory}drawing_${Date.now()}.png`;
+            setIsDrawingMode(false);
+            onDrawingSaved(dummyUri);
+        }
     };
 
     const deleteDrawing = () => {
@@ -141,7 +167,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ onDraw
                         </TouchableOpacity>
                     </View>
 
-                    <View style={styles.canvasContainer}>
+                    <View style={styles.canvasContainer} ref={canvasRef}>
                         <PanGestureHandler
                             onGestureEvent={onGestureEvent}
                             onHandlerStateChange={onHandlerStateChange}
