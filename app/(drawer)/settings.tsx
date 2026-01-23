@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Modal, ActivityIndicator, TouchableWithoutFeedback } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { clearAllCache } from '../../services/storage';
+import { exportNotesAsJSON, exportNotesAsText } from '../../services/export';
 
 export default function Settings() {
     const { isDarkMode, toggleTheme } = useTheme();
@@ -13,6 +14,8 @@ export default function Settings() {
     const router = useRouter();
     const [notificationsEnabled, setNotificationsEnabled] = useState(true);
     const [syncNotifications, setSyncNotifications] = useState(false);
+    const [isExportModalVisible, setIsExportModalVisible] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
 
     const handleClearCache = () => {
         Alert.alert(
@@ -45,6 +48,31 @@ export default function Settings() {
                 }
             ]
         );
+    };
+
+    const handleExportNotes = () => {
+        setIsExportModalVisible(true);
+    };
+
+    const performExport = async (format: 'json' | 'text') => {
+        setIsExportModalVisible(false);
+        setIsExporting(true);
+
+        try {
+            const result = format === 'json'
+                ? await exportNotesAsJSON()
+                : await exportNotesAsText();
+
+            if (result.success) {
+                Alert.alert('Export Successful', result.message);
+            } else {
+                Alert.alert('Export Failed', result.message);
+            }
+        } catch (error) {
+            Alert.alert('Error', 'An unexpected error occurred during export');
+        } finally {
+            setIsExporting(false);
+        }
     };
 
     const SettingSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -180,7 +208,7 @@ export default function Settings() {
                         icon="download"
                         label="Export Notes"
                         value="Download all notes"
-                        onPress={() => Alert.alert('Coming Soon', 'Export feature will be available soon')}
+                        onPress={handleExportNotes}
                     />
                 </SettingSection>
 
@@ -196,13 +224,13 @@ export default function Settings() {
                     <SettingRow
                         icon="file-text"
                         label="Terms of Service"
-                        onPress={() => Alert.alert('Terms of Service', 'Terms will be displayed here')}
+                        onPress={() => router.push('/legal/terms')}
                     />
                     <View style={styles.divider} />
                     <SettingRow
                         icon="shield"
                         label="Privacy Policy"
-                        onPress={() => Alert.alert('Privacy Policy', 'Privacy policy will be displayed here')}
+                        onPress={() => router.push('/legal/privacy')}
                     />
                 </SettingSection>
 
@@ -223,6 +251,86 @@ export default function Settings() {
                     </Text>
                 </View>
             </ScrollView>
+
+            {/* Export Format Selection Modal */}
+            <Modal
+                visible={isExportModalVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setIsExportModalVisible(false)}
+            >
+                <TouchableWithoutFeedback onPress={() => setIsExportModalVisible(false)}>
+                    <View style={styles.modalOverlay}>
+                        <TouchableWithoutFeedback>
+                            <View style={[styles.exportModal, isDarkMode && styles.exportModalDark]}>
+                                <View style={styles.exportModalHeader}>
+                                    <Text style={[styles.exportModalTitle, isDarkMode && styles.textDark]}>
+                                        Export Notes
+                                    </Text>
+                                    <Text style={[styles.exportModalSubtitle, isDarkMode && styles.textDarkSecondary]}>
+                                        Choose export format
+                                    </Text>
+                                </View>
+
+                                <TouchableOpacity
+                                    style={[styles.exportOption, isDarkMode && styles.exportOptionDark]}
+                                    onPress={() => performExport('json')}
+                                >
+                                    <View style={[styles.exportIconContainer, { backgroundColor: isDarkMode ? 'rgba(99, 102, 241, 0.1)' : '#EEF2FF' }]}>
+                                        <Feather name="code" size={24} color="#6366f1" />
+                                    </View>
+                                    <View style={styles.exportOptionText}>
+                                        <Text style={[styles.exportOptionTitle, isDarkMode && styles.textDark]}>
+                                            JSON Format
+                                        </Text>
+                                        <Text style={[styles.exportOptionDescription, isDarkMode && styles.textDarkSecondary]}>
+                                            Complete data with all metadata
+                                        </Text>
+                                    </View>
+                                    <Feather name="chevron-right" size={20} color={isDarkMode ? '#64748b' : '#9CA3AF'} />
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[styles.exportOption, isDarkMode && styles.exportOptionDark]}
+                                    onPress={() => performExport('text')}
+                                >
+                                    <View style={[styles.exportIconContainer, { backgroundColor: isDarkMode ? 'rgba(34, 197, 94, 0.1)' : '#F0FDF4' }]}>
+                                        <Feather name="file-text" size={24} color="#22C55E" />
+                                    </View>
+                                    <View style={styles.exportOptionText}>
+                                        <Text style={[styles.exportOptionTitle, isDarkMode && styles.textDark]}>
+                                            Plain Text Format
+                                        </Text>
+                                        <Text style={[styles.exportOptionDescription, isDarkMode && styles.textDarkSecondary]}>
+                                            Human-readable text file
+                                        </Text>
+                                    </View>
+                                    <Feather name="chevron-right" size={20} color={isDarkMode ? '#64748b' : '#9CA3AF'} />
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={styles.exportCancelButton}
+                                    onPress={() => setIsExportModalVisible(false)}
+                                >
+                                    <Text style={styles.exportCancelText}>Cancel</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+
+            {/* Export Loading Overlay */}
+            {isExporting && (
+                <View style={styles.loadingOverlay}>
+                    <View style={[styles.loadingContainer, isDarkMode && styles.loadingContainerDark]}>
+                        <ActivityIndicator size="large" color="#6366f1" />
+                        <Text style={[styles.loadingText, isDarkMode && styles.textDark]}>
+                            Exporting notes...
+                        </Text>
+                    </View>
+                </View>
+            )}
         </SafeAreaView>
     );
 }
@@ -364,5 +472,106 @@ const styles = StyleSheet.create({
     },
     footerTextDark: {
         color: '#64748b',
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    exportModal: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        padding: 24,
+        width: '100%',
+        maxWidth: 400,
+    },
+    exportModalDark: {
+        backgroundColor: '#1e293b',
+    },
+    exportModalHeader: {
+        marginBottom: 20,
+    },
+    exportModalTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#1F2937',
+        marginBottom: 4,
+    },
+    exportModalSubtitle: {
+        fontSize: 14,
+        color: '#6B7280',
+    },
+    exportOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        backgroundColor: '#F9FAFB',
+        borderRadius: 12,
+        marginBottom: 12,
+    },
+    exportOptionDark: {
+        backgroundColor: '#0f172a',
+    },
+    exportIconContainer: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    exportOptionText: {
+        flex: 1,
+    },
+    exportOptionTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#1F2937',
+        marginBottom: 2,
+    },
+    exportOptionDescription: {
+        fontSize: 13,
+        color: '#6B7280',
+    },
+    exportCancelButton: {
+        padding: 16,
+        alignItems: 'center',
+        marginTop: 8,
+    },
+    exportCancelText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#6B7280',
+    },
+    loadingOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    loadingContainer: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        padding: 32,
+        alignItems: 'center',
+        minWidth: 200,
+    },
+    loadingContainerDark: {
+        backgroundColor: '#1e293b',
+    },
+    loadingText: {
+        marginTop: 16,
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#1F2937',
+    },
+    textDarkSecondary: {
+        color: '#94a3b8',
     },
 });

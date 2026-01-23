@@ -325,18 +325,17 @@ const processDrawingCreate = async (operation: QueuedOperation): Promise<void> =
     console.log(`PREPARING DRAWING UPLOAD: ${drawing_uri}, ID: ${noteId}`);
 
     try {
-        // First, verify the file exists using expo-file-system
-        const FileSystem = await import('expo-file-system');
-        const fileInfo = await FileSystem.getInfoAsync(drawing_uri);
+        // First, verify the file exists using expo-file-system new API
+        const { File: FileClass } = await import('expo-file-system');
+        const file = new FileClass(drawing_uri);
+        const exists = file.exists;
 
         console.log(`📁 File info:`, {
-            exists: fileInfo.exists,
-            uri: fileInfo.uri,
-            size: fileInfo.exists ? (fileInfo as any).size : 0,
-            isDirectory: fileInfo.isDirectory,
+            exists,
+            uri: drawing_uri,
         });
 
-        if (!fileInfo.exists) {
+        if (!exists) {
             throw new Error(`Drawing file does not exist at ${drawing_uri}`);
         }
 
@@ -350,7 +349,6 @@ const processDrawingCreate = async (operation: QueuedOperation): Promise<void> =
             url: `${api.defaults.baseURL}/notes/${noteId}/drawings`,
             filename,
             uri: drawing_uri,
-            fileSize: (fileInfo as any).size,
         });
 
         // For React Native, we need to use the file URI directly in FormData
