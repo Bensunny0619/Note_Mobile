@@ -20,182 +20,170 @@ interface SyncResult {
     remaining: number;
 }
 
+let isSyncing = false;
+
 export const processSyncQueue = async (): Promise<SyncResult> => {
+    if (isSyncing) {
+        console.log('🔄 Sync already in progress, skipping...');
+        return { successful: 0, failed: 0, remaining: 0 };
+    }
+
     let queue = await getSyncQueue();
 
     if (queue.length === 0) {
         return { successful: 0, failed: 0, remaining: 0 };
     }
 
-    console.log(`📤 Processing ${queue.length} queued operations...`);
+    isSyncing = true;
+    try {
+        console.log(`📤 Processing ${queue.length} queued operations...`);
 
-    // Auto-clear stuck operations (exceeded retries or too old)
-    const now = Date.now();
-    const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
-    const initialLength = queue.length;
+        // Auto-clear stuck operations (exceeded retries or too old)
+        const now = Date.now();
+        const MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+        const initialLength = queue.length;
 
-    queue = queue.filter(op => {
-        // Remove if exceeded retries
-        if (op.retryCount >= MAX_RETRIES) {
-            console.warn(`⚠️ Auto-removing operation ${op.id} (exceeded ${MAX_RETRIES} retries)`);
-            return false;
-        }
-
-        // Remove if too old (stuck for 30+ minutes)
-        const age = now - new Date(op.createdAt).getTime();
-        if (age > MAX_AGE_MS) {
-            console.warn(`⚠️ Auto-removing stale operation ${op.id} (age: ${Math.round(age / 60000)}min)`);
-            return false;
-        }
-
-        return true;
-    });
-
-    // Update queue if we removed anything
-    if (queue.length < initialLength) {
-        await setSyncQueue(queue);
-        console.log(`✅ Auto-cleared ${initialLength - queue.length} stuck operation(s)`);
-    }
-
-    if (queue.length === 0) {
-        return { successful: 0, failed: 0, remaining: 0 };
-    }
-
-    let successful = 0;
-    let failed = 0;
-    const failedNoteCreationIds = new Set<string | number>();
-
-    // Identify all pending Note CREATIONs in the queue
-    const pendingNoteCreations = new Set<string>(
-        queue
-            .filter(op => op.type === 'CREATE' && op.resourceType === 'note')
-            .map(op => op.resourceId as string)
-    );
-
-    // Group operations by dependency
-    const noteCreations: QueuedOperation[] = [];
-    const independentOps: QueuedOperation[] = [];
-    const dependentOps: Map<string | number, QueuedOperation[]> = new Map();
-
-    for (const operation of queue) {
-        // 2. Resolve the Target Note ID for this operation
-        let targetNoteId: string | null = null;
-        if (operation.resourceType === 'note') {
-            targetNoteId = operation.resourceId as string;
-        } else if (operation.payload?.noteId) {
-            targetNoteId = operation.payload.noteId;
-        }
-
-        // 3. Check for ORPHANS: Targeting an offline note that is NOT pending creation
-        // (If the note is not in pendingNoteCreations, and it's an offline_ ID, 
-        //  it means the original CREATE failed max retries or was lost. 
-        //  We must discard this dependent op.)
-
-        // Ensure strictly string for verification
-        const targetNoteIdString = targetNoteId ? String(targetNoteId) : '';
-        const isTargetingOffline = targetNoteIdString.startsWith('offline_');
-
-        // A Note CREATE operation targets itself, so it IS found in pendingNoteCreations.
-        // We only care if we CANT find it.
-        if (isTargetingOffline && !pendingNoteCreations.has(targetNoteIdString)) {
-            console.warn(`🗑️ Discarding orphan operation ${operation.id} (targets missing offline note ${targetNoteId})`);
-            await dequeueOperation(operation.id);
-            failed++;
-            continue;
-        }
-
-        if (operation.type === 'CREATE' && operation.resourceType === 'note') {
-            noteCreations.push(operation);
-        } else if (typeof operation.resourceId === 'string' && operation.resourceId.startsWith('offline_')) {
-            // Dependent on note creation
-            if (!dependentOps.has(operation.resourceId)) {
-                dependentOps.set(operation.resourceId, []);
+        queue = queue.filter(op => {
+            if (op.retryCount >= MAX_RETRIES) {
+                console.warn(`⚠️ Auto-removing operation ${op.id} (exceeded ${MAX_RETRIES} retries)`);
+                return false;
             }
-            dependentOps.get(operation.resourceId)!.push(operation);
-        } else if (operation.payload?.noteId && String(operation.payload.noteId).startsWith('offline_')) {
-            // Also dependent if payload contains an offline noteId
-            const dependentOnId = String(operation.payload.noteId);
-            if (!dependentOps.has(dependentOnId)) {
-                dependentOps.set(dependentOnId, []);
+            const age = now - new Date(op.createdAt).getTime();
+            if (age > MAX_AGE_MS) {
+                console.warn(`⚠️ Auto-removing stale operation ${op.id} (age: ${Math.round(age / 60000)}min)`);
+                return false;
             }
-            dependentOps.get(dependentOnId)!.push(operation);
-        }
-        else {
-            // Independent operation
-            independentOps.push(operation);
-        }
-    }
+            return true;
+        });
 
-    // Process note creations first (must be sequential for ID mapping)
-    for (const operation of noteCreations) {
-        try {
-            const oldId = operation.resourceId;
-            await processOperation(operation);
-            successful++;
-            await dequeueOperation(operation.id);
+        if (queue.length < initialLength) {
+            await setSyncQueue(queue);
+            console.log(`✅ Auto-cleared ${initialLength - queue.length} stuck operation(s)`);
+        }
 
-            // Process dependent operations immediately after note creation
-            const deps = dependentOps.get(oldId) || [];
-            for (const depOp of deps) {
-                try {
-                    await processOperation(depOp);
-                    successful++;
+        if (queue.length === 0) {
+            return { successful: 0, failed: 0, remaining: 0 };
+        }
+
+        let successful = 0;
+        let failed = 0;
+        const failedNoteCreationIds = new Set<string | number>();
+
+        // Identify all pending Note CREATIONs in the queue
+        const pendingNoteCreations = new Set<string>(
+            queue
+                .filter(op => op.type === 'CREATE' && op.resourceType === 'note')
+                .map(op => op.resourceId as string)
+        );
+
+        // Group operations by dependency
+        const noteCreations: QueuedOperation[] = [];
+        const dependentOps: Map<string | number, QueuedOperation[]> = new Map();
+
+        for (const operation of queue) {
+            let targetNoteId: string | null = null;
+            if (operation.resourceType === 'note') {
+                targetNoteId = operation.resourceId as string;
+            } else if (operation.payload?.noteId) {
+                targetNoteId = operation.payload.noteId;
+            }
+
+            const targetNoteIdString = targetNoteId ? String(targetNoteId) : '';
+            const isTargetingOffline = targetNoteIdString.startsWith('offline_');
+
+            if (isTargetingOffline && !pendingNoteCreations.has(targetNoteIdString)) {
+                console.warn(`🗑️ Discarding orphan operation ${operation.id} (targets missing offline note ${targetNoteId})`);
+                await dequeueOperation(operation.id);
+                failed++;
+                continue;
+            }
+
+            if (operation.type === 'CREATE' && operation.resourceType === 'note') {
+                noteCreations.push(operation);
+            } else if (typeof operation.resourceId === 'string' && operation.resourceId.startsWith('offline_')) {
+                if (!dependentOps.has(operation.resourceId)) {
+                    dependentOps.set(operation.resourceId, []);
+                }
+                dependentOps.get(operation.resourceId)!.push(operation);
+            } else if (operation.payload?.noteId && String(operation.payload.noteId).startsWith('offline_')) {
+                const dependentOnId = String(operation.payload.noteId);
+                if (!dependentOps.has(dependentOnId)) {
+                    dependentOps.set(dependentOnId, []);
+                }
+                dependentOps.get(dependentOnId)!.push(operation);
+            }
+        }
+
+        // Process note creations first (must be sequential for ID mapping)
+        for (const operation of noteCreations) {
+            try {
+                await processOperation(operation);
+                successful++;
+                await dequeueOperation(operation.id);
+            } catch (error: any) {
+                await handleOperationError(operation, error);
+                failedNoteCreationIds.add(operation.resourceId);
+                failed++;
+
+                const deps = dependentOps.get(operation.resourceId) || [];
+                for (const depOp of deps) {
+                    console.warn(`⏭️ Skipping dependent operation ${depOp.id} due to failed note creation`);
                     await dequeueOperation(depOp.id);
-                } catch (error: any) {
-                    await handleOperationError(depOp, error);
                     failed++;
                 }
             }
-            dependentOps.delete(oldId);
-        } catch (error: any) {
-            await handleOperationError(operation, error);
-            failedNoteCreationIds.add(operation.resourceId);
-            failed++;
-
-            // Skip dependent operations if note creation failed
-            const deps = dependentOps.get(operation.resourceId) || [];
-            for (const depOp of deps) {
-                console.warn(`⏭️ Skipping dependent operation ${depOp.id} due to failed note creation`);
-                await dequeueOperation(depOp.id);
-                failed++;
-            }
-            dependentOps.delete(operation.resourceId);
         }
-    }
 
-    // Process independent operations in parallel (batches of 20)
-    const BATCH_SIZE = 20; // Increased from 5 for faster sync
-    for (let i = 0; i < independentOps.length; i += BATCH_SIZE) {
-        const batch = independentOps.slice(i, i + BATCH_SIZE);
-        const results = await Promise.allSettled(
-            batch.map(async (op) => {
-                try {
-                    await processOperation(op);
-                    await dequeueOperation(op.id);
-                    return { success: true };
-                } catch (error: any) {
-                    await handleOperationError(op, error);
-                    return { success: false };
-                }
-            })
+        // After all note creations are processed, re-fetch the queue 
+        // to get updated IDs for dependent operations
+        const refreshedQueue = await getSyncQueue();
+
+        // Remaining independent operations
+        const activeIndependentOps = refreshedQueue.filter(op =>
+            !failedNoteCreationIds.has(op.resourceId) &&
+            !(op.payload?.noteId && failedNoteCreationIds.has(op.payload.noteId))
         );
 
-        results.forEach(result => {
-            if (result.status === 'fulfilled' && result.value.success) {
-                successful++;
-            } else {
-                failed++;
+        // Process independent operations in parallel (batches of 20)
+        const BATCH_SIZE = 20;
+        for (let i = 0; i < activeIndependentOps.length; i += BATCH_SIZE) {
+            const batch = activeIndependentOps.slice(i, i + BATCH_SIZE);
+            const results = await Promise.allSettled(
+                batch.map(async (op) => {
+                    try {
+                        await processOperation(op);
+                        return { id: op.id, success: true };
+                    } catch (error: any) {
+                        await handleOperationError(op, error);
+                        return { id: op.id, success: false };
+                    }
+                })
+            );
+
+            // Sequential dequeue for thread safety
+            for (const result of results) {
+                if (result.status === 'fulfilled') {
+                    if (result.value.success) {
+                        successful++;
+                        await dequeueOperation(result.value.id);
+                    } else {
+                        failed++;
+                    }
+                } else {
+                    failed++;
+                }
             }
-        });
-    }
+        }
 
-    // Update last sync time if any operations were successful
-    if (successful > 0) {
-        await setLastSyncTime(new Date().toISOString());
-    }
+        if (successful > 0) {
+            await setLastSyncTime(new Date().toISOString());
+        }
 
-    const remaining = await getSyncQueue();
-    return { successful, failed, remaining: remaining.length };
+        const remaining = await getSyncQueue();
+        return { successful, failed, remaining: remaining.length };
+    } finally {
+        isSyncing = false;
+    }
 };
 
 // Helper function to handle operation errors
@@ -427,7 +415,7 @@ const processCreate = async (operation: QueuedOperation): Promise<void> => {
         console.log(`✅ Note created on server with ID: ${serverNote.id}`);
 
         // CRITICAL: Update pending references in the queue
-        // Any subsequent operations (images, checklists) still have the temp ID
+        // Any subsequent operations (images, checklists, drawings, audio) still have the temp ID
         const currentQueue = await getSyncQueue();
         let queueModified = false;
 
@@ -441,10 +429,16 @@ const processCreate = async (operation: QueuedOperation): Promise<void> => {
                 opModified = true;
             }
 
-            // 2. Update payload.noteId if it matches tempId (e.g. CREATE checklist)
-            if (newOp.payload && newOp.payload.noteId === tempId) {
-                newOp.payload = { ...newOp.payload, noteId: serverNote.id };
-                opModified = true;
+            // 2. Update various payload fields that might contain the note ID
+            if (newOp.payload) {
+                // Common field is noteId
+                if (newOp.payload.noteId === tempId) {
+                    newOp.payload = { ...newOp.payload, noteId: serverNote.id };
+                    opModified = true;
+                }
+
+                // Drawing and Audio might use different structures or just noteId
+                // The current processDrawingCreate and processAudioCreate use payload.noteId
             }
 
             if (opModified) queueModified = true;

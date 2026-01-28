@@ -475,8 +475,9 @@ export default function EditNote() {
     return (
         <SafeAreaView style={[styles.container, isDarkMode && styles.containerDark]}>
             <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 style={{ flex: 1 }}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
             >
                 <View style={[styles.header, isDarkMode && styles.headerDark]}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -845,21 +846,21 @@ export default function EditNote() {
                         </View>
                     </View>
                 </ScrollView>
+                {/* Google Keep Bottom Toolbar */}
+                <View style={[styles.bottomToolbar, isDarkMode && styles.bottomToolbarDark]}>
+                    <TouchableOpacity style={styles.toolbarAction} onPress={() => setIsAttachmentMenuVisible(true)}>
+                        <Feather name="plus-square" size={24} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                    </TouchableOpacity>
+
+                    <Text style={[styles.editedText, isDarkMode && styles.textDarkSecondary]}>
+                        Edited {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+
+                    <TouchableOpacity style={styles.toolbarAction} onPress={() => setIsOptionsMenuVisible(true)}>
+                        <Feather name="more-vertical" size={24} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
+                    </TouchableOpacity>
+                </View>
             </KeyboardAvoidingView>
-            {/* Google Keep Bottom Toolbar */}
-            <View style={[styles.bottomToolbar, isDarkMode && styles.bottomToolbarDark]}>
-                <TouchableOpacity style={styles.toolbarAction} onPress={() => setIsAttachmentMenuVisible(true)}>
-                    <Feather name="plus-square" size={24} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
-                </TouchableOpacity>
-
-                <Text style={[styles.editedText, isDarkMode && styles.textDarkSecondary]}>
-                    Edited {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </Text>
-
-                <TouchableOpacity style={styles.toolbarAction} onPress={() => setIsOptionsMenuVisible(true)}>
-                    <Feather name="more-vertical" size={24} color={isDarkMode ? "#cbd5e1" : "#5f6368"} />
-                </TouchableOpacity>
-            </View>
 
             {/* Attachment Menu Modal */}
             <Modal
@@ -1105,13 +1106,14 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         padding: 24,
+        paddingBottom: 100, // Extra padding to scroll content above bottom toolbar
     },
     titleInput: {
-        fontSize: 28,
-        fontWeight: '900',
+        fontSize: 24,
+        fontWeight: '800',
         color: '#111827',
         marginBottom: 8,
-        letterSpacing: -0.5,
+        letterSpacing: -0.4,
     },
     labelSection: {
         marginBottom: 20,
@@ -1142,10 +1144,10 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
     },
     contentInput: {
-        fontSize: 18,
+        fontSize: 16,
         color: '#374151',
         minHeight: 150,
-        lineHeight: 28,
+        lineHeight: 24,
         fontWeight: '400',
     },
     checklistSection: {
@@ -1439,10 +1441,15 @@ const styles = StyleSheet.create({
         backgroundColor: '#FFFFFF',
         justifyContent: 'space-between',
         borderTopWidth: 1,
-        borderTopColor: 'transparent',
+        borderTopColor: 'rgba(0,0,0,0.05)',
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
     },
     bottomToolbarDark: {
-        backgroundColor: '#0f172a',
+        backgroundColor: '#1E293B',
+        borderTopColor: 'rgba(255,255,255,0.05)',
     },
     toolbarAction: {
         padding: 8,

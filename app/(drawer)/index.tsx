@@ -233,9 +233,9 @@ export default function NotesScreen() {
                 </View>
 
                 {/* Audio Recordings Preview */}
-                {((item.audio_recordings && item.audio_recordings.length > 0) || item.audio_uri) && (
+                {((item.audio_recordings?.length > 0) || item.audio_uri) && (
                     <View style={styles.audioPreviewContainer}>
-                        {((item.audio_recordings && item.audio_recordings.length > 0) ? item.audio_recordings : [{ id: 'local', uri: item.audio_uri }]).slice(0, 1).map((audio: any) => {
+                        {(item.audio_recordings?.length > 0 ? item.audio_recordings : [{ id: 'local', uri: item.audio_uri }]).slice(0, 1).map((audio: any) => {
                             const audioUri = audio.audio_url || audio.file_url || audio.uri;
                             const isThisPlaying = isPlaying && currentUri === audioUri;
                             return (
@@ -253,7 +253,7 @@ export default function NotesScreen() {
                                 >
                                     <Feather name={isThisPlaying ? "pause" : "play"} size={12} color="#6366f1" />
                                     <Text style={[styles.audioPillText, isDarkMode && { color: '#818cf8' }]}>
-                                        Audio {item.audio_recordings.length > 1 ? `(+${item.audio_recordings.length - 1})` : ''}
+                                        Audio {item.audio_recordings?.length > 1 ? `(+${item.audio_recordings.length - 1})` : ''}
                                     </Text>
                                 </TouchableOpacity>
                             );
@@ -285,7 +285,7 @@ export default function NotesScreen() {
                 )}
 
                 {item.content ? (
-                    <Text style={[styles.noteContent, isDarkMode && styles.textDarkSecondary]} numberOfLines={item.checklist_items?.length > 0 || allVisuals.length > 0 ? 2 : 5}>
+                    <Text style={[styles.noteContent, isDarkMode && styles.textDarkSecondary]} numberOfLines={(item.checklist_items?.length > 0 || allVisuals.length > 0) ? 2 : 5}>
                         {item.content}
                     </Text>
                 ) : null}
@@ -694,11 +694,11 @@ const styles = StyleSheet.create({
     noteCard: {
         width: COLUMN_WIDTH,
         backgroundColor: '#FFFFFF',
-        borderRadius: 12,
+        borderRadius: 16,
         padding: 16,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: '#E0E0E0',
+        borderColor: 'rgba(0,0,0,0.05)',
         // No explicit shadow for flat clean look, or very subtle
     },
     noteHeaderRow: {
@@ -799,7 +799,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(99, 102, 241, 0.1)',
         paddingHorizontal: 6,
         paddingVertical: 2,
-        borderRadius: 4,
+        borderRadius: 12,
         borderWidth: 0.5,
         borderColor: 'rgba(99, 102, 241, 0.2)',
     },
