@@ -524,7 +524,7 @@ const processImageUpload = async (operation: QueuedOperation): Promise<void> => 
 const processReminderCreate = async (operation: QueuedOperation): Promise<void> => {
     const { noteId, remind_at } = operation.payload;
 
-    await api.post(`/notes/${noteId}/reminders`, { remind_at });
+    await api.post(`/notes/${noteId}/reminder`, { remind_at });
 
     console.log(`✅ Reminder created for note ${noteId}`);
 };

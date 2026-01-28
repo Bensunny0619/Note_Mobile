@@ -234,7 +234,7 @@ export default function EditNote() {
             if (reminderDate) {
                 await offlineApi.createReminder(id as string | number, reminderDate.toISOString());
             } else if (reminderId) {
-                await offlineApi.deleteReminder(reminderId);
+                await offlineApi.deleteReminder(id as string | number, reminderId);
                 setReminderId(null);
             }
 

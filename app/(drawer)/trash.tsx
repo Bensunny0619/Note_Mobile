@@ -51,7 +51,7 @@ export default function Trash() {
                     onPress: async () => {
                         try {
                             // Implement restore logic here
-                            await offlineApi.updateNote(note.id, { is_deleted: false });
+                            await offlineApi.updateNote(note.id, { is_deleted: false }); // Soft-restore locally
                             fetchTrashedNotes();
                         } catch (error) {
                             Alert.alert('Error', 'Failed to restore note');
@@ -73,7 +73,7 @@ export default function Trash() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await offlineApi.deleteNote(note.id);
+                            await offlineApi.permanentlyDeleteNote(note.id); // True delete
                             fetchTrashedNotes();
                         } catch (error) {
                             Alert.alert('Error', 'Failed to delete note');
@@ -98,7 +98,7 @@ export default function Trash() {
                         try {
                             setLoading(true);
                             for (const note of notes) {
-                                await offlineApi.deleteNote(note.id);
+                                await offlineApi.permanentlyDeleteNote(note.id);
                             }
                             fetchTrashedNotes();
                         } catch (error) {

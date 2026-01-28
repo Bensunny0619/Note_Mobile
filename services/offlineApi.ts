@@ -234,20 +234,31 @@ export const updateNote = async (id: string | number, payload: any): Promise<any
 };
 
 export const deleteNote = async (id: string | number): Promise<void> => {
+    // Soft delete: update cache only
+    const cached = await getCachedNoteById(id);
+    if (cached) {
+        await updateCachedNote(id, {
+            data: { ...cached.data, is_deleted: true },
+            locallyModified: true,
+        });
+        console.log('🗑️ Note soft-deleted locally:', id);
+    }
+};
+
+export const permanentlyDeleteNote = async (id: string | number): Promise<void> => {
     // Remove from cache immediately
     await removeCachedNote(id);
 
-    console.log('🗑️ Note deleted locally:', id);
+    console.log('💣 Note deleted permanently from cache:', id);
 
     const idStr = id.toString();
     if (idStr.startsWith('offline_')) {
-        // If it's an offline note that was never synced, we MUST remove its pending 
-        // creation logic from the queue (and any attachments) instead of sending DELETE
+        // If it's an offline note that was never synced, remove its pending operations
         try {
             const queue = await getSyncQueue();
             const filteredQueue = queue.filter(op => {
-                const isTargetNote = op.resourceId === id; // Op targeting this note
-                const isRelatedAttachment = op.payload && op.payload.noteId === id; // Op belonging to this note
+                const isTargetNote = op.resourceId === id;
+                const isRelatedAttachment = op.payload && op.payload.noteId === id;
                 return !isTargetNote && !isRelatedAttachment;
             });
 
@@ -261,7 +272,7 @@ export const deleteNote = async (id: string | number): Promise<void> => {
         return;
     }
 
-    // Queue for sync (only if it's a server ID)
+    // Queue for server DELETE (only if it's a real server ID)
     await enqueueOperation({
         type: 'DELETE',
         resourceType: 'note',
@@ -300,6 +311,15 @@ export const uploadImage = async (noteId: string | number, imageFile: { uri: str
 
 // Reminder operations
 export const createReminder = async (noteId: string | number, remind_at: string): Promise<void> => {
+    // Optimistic update
+    const cached = await getCachedNoteById(noteId);
+    if (cached) {
+        await updateCachedNote(noteId, {
+            data: { ...cached.data, reminder: { remind_at } },
+            locallyModified: true,
+        });
+    }
+
     await enqueueOperation({
         type: 'CREATE_REMINDER',
         resourceType: 'reminder',
@@ -310,7 +330,16 @@ export const createReminder = async (noteId: string | number, remind_at: string)
     console.log('⏰ Reminder queued for note:', noteId);
 };
 
-export const deleteReminder = async (reminderId: number): Promise<void> => {
+export const deleteReminder = async (noteId: string | number, reminderId: number): Promise<void> => {
+    // Optimistic update
+    const cached = await getCachedNoteById(noteId);
+    if (cached) {
+        await updateCachedNote(noteId, {
+            data: { ...cached.data, reminder: null },
+            locallyModified: true,
+        });
+    }
+
     await enqueueOperation({
         type: 'DELETE_REMINDER',
         resourceType: 'reminder',
