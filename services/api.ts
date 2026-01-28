@@ -31,18 +31,23 @@ api.interceptors.response.use(
     (response) => response,
     async (error) => {
         if (error.response?.status === 401) {
-            console.log('--- SESSION EXPIRED / UNAUTHENTICATED ---');
-            console.log('🔄 Clearing auth data and redirecting to login...');
+            const token = await SecureStore.getItemAsync('auth_token');
+            if (token) {
+                console.log('--- SESSION EXPIRED / UNAUTHENTICATED ---');
+                console.log('🔄 Clearing auth data and redirecting to login...');
 
-            // Clear all authentication data
-            await SecureStore.deleteItemAsync('auth_token');
-            await SecureStore.deleteItemAsync('user_data');
+                // Clear all authentication data
+                await SecureStore.deleteItemAsync('auth_token');
+                await SecureStore.deleteItemAsync('user_data');
 
-            // Redirect to login screen
-            try {
-                router.replace('/(auth)/login');
-            } catch (navError) {
-                console.error('Navigation error:', navError);
+                // Redirect to login screen
+                try {
+                    router.replace('/(auth)/login');
+                } catch (navError) {
+                    console.error('Navigation error:', navError);
+                }
+            } else {
+                console.log('--- UNAUTHENTICATED (No token) ---');
             }
         }
         return Promise.reject(error);

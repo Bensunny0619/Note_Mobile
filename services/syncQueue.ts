@@ -194,6 +194,12 @@ const handleOperationError = async (operation: QueuedOperation, error: any): Pro
 
     console.error(`❌ Failed to process operation ${operation.id} (${operation.type}):`, errorMsg);
 
+    // STOP retrying if unauthenticated (401)
+    if (error.response?.status === 401) {
+        console.warn('⏹️ Unauthenticated (401), stopping sync queue processing');
+        throw error; // Rethrow to stop the loop in processSyncQueue
+    }
+
     // STOP retrying if resource is not found (404) on server
     if (error.response?.status === 404) {
         console.warn(`🗑️ Target resource not found (404), discarding operation ${operation.id}`);
@@ -203,6 +209,13 @@ const handleOperationError = async (operation: QueuedOperation, error: any): Pro
 
     if (error.response?.status === 422) {
         console.error('Validation Errors:', error.response.data.errors);
+        // If it's a "date after now" error, it's a terminal error for sync, discard it
+        const errors = JSON.stringify(error.response.data.errors);
+        if (errors.includes('date after now')) {
+            console.warn(`🗑️ Discarding operation ${operation.id} due to past date validation`);
+            await dequeueOperation(operation.id);
+            return;
+        }
     }
 
     // Update retry count and keep in queue

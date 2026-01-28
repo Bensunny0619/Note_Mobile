@@ -129,12 +129,7 @@ export default function NotesScreen() {
     };
 
     const handleLongPress = (note: Note) => {
-        if (selectedNoteIds.length > 0) {
-            toggleNoteSelection(note.id);
-        } else {
-            setSelectedNote(note);
-            setIsMenuVisible(true);
-        }
+        toggleNoteSelection(note.id);
     };
 
     const closeMenu = () => {
@@ -284,6 +279,57 @@ export default function NotesScreen() {
         }
     };
 
+    const handleBatchPin = async () => {
+        if (selectedNoteIds.length === 0) return;
+        try {
+            setLoading(true);
+            // We'll pin all of them for simplicity, or we could toggle based on the first one
+            // Let's toggle based on the first note's status
+            const firstNote = notes.find(n => n.id === selectedNoteIds[0]);
+            const shouldPin = !firstNote?.is_pinned;
+
+            for (const id of selectedNoteIds) {
+                if (shouldPin) {
+                    await offlineApi.pinNote(id);
+                } else {
+                    await offlineApi.unpinNote(id);
+                }
+            }
+            if (isOnline) triggerSync();
+            setSelectedNoteIds([]);
+            fetchNotes();
+        } catch (error) {
+            Alert.alert('Error', 'Failed to update pin status for notes');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleBatchShare = async () => {
+        if (selectedNoteIds.length === 0) return;
+        try {
+            const selectedNotes = notes.filter(n => selectedNoteIds.includes(n.id));
+            let combinedMessage = '';
+
+            for (const note of selectedNotes) {
+                combinedMessage += `--- ${note.title || 'Untitled Note'} ---\n`;
+                combinedMessage += `${note.content || ''}\n`;
+                if (note.checklist_items?.length > 0) {
+                    combinedMessage += note.checklist_items
+                        .map((item: any) => `${item.is_completed ? '☑' : '☐'} ${item.text}`)
+                        .join('\n') + '\n';
+                }
+                combinedMessage += '\n';
+            }
+
+            await Share.share({
+                message: combinedMessage.trim(),
+            });
+        } catch (error) {
+            console.error('Batch share error:', error);
+        }
+    };
+
     const filteredNotes = (notes || []).filter(note => {
         const matchesSearch = (note.title?.toLowerCase().includes(searchQuery.toLowerCase())) ||
             (note.content?.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -335,7 +381,7 @@ export default function NotesScreen() {
                         router.push(`/notes/edit/${item.id}` as any);
                     }
                 }}
-                onLongPress={() => toggleNoteSelection(item.id)}
+                onLongPress={() => handleLongPress(item)}
                 activeOpacity={0.7}
             >
                 {isSelected && (
@@ -503,6 +549,12 @@ export default function NotesScreen() {
                         </Text>
 
                         <View style={{ flexDirection: 'row' }}>
+                            <TouchableOpacity onPress={handleBatchPin} style={styles.toolbarAction}>
+                                <MaterialCommunityIcons name="pin" size={22} color="#FFFFFF" />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={handleBatchShare} style={styles.toolbarAction}>
+                                <Feather name="share-2" size={22} color="#FFFFFF" />
+                            </TouchableOpacity>
                             <TouchableOpacity onPress={handleBatchArchive} style={styles.toolbarAction}>
                                 <Feather name="archive" size={22} color="#FFFFFF" />
                             </TouchableOpacity>
