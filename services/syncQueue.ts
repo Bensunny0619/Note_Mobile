@@ -261,6 +261,18 @@ const processOperation = async (operation: QueuedOperation): Promise<void> => {
         case 'DELETE_CHECKLIST':
             await processChecklistDelete(operation);
             break;
+        case 'PIN_NOTE':
+            await processPin(operation);
+            break;
+        case 'UNPIN_NOTE':
+            await processUnpin(operation);
+            break;
+        case 'ARCHIVE_NOTE':
+            await processArchive(operation);
+            break;
+        case 'UNARCHIVE_NOTE':
+            await processUnarchive(operation);
+            break;
         default:
             throw new Error(`Unknown operation type: ${operation.type}`);
     }
@@ -544,10 +556,56 @@ const processLabelDetach = async (operation: QueuedOperation): Promise<void> => 
 
 const processChecklistCreate = async (operation: QueuedOperation): Promise<void> => {
     const { noteId, text, is_completed } = operation.payload;
+    const tempId = operation.resourceId;
 
-    await api.post(`/notes/${noteId}/checklist`, { text, is_completed });
+    const response = await api.post(`/notes/${noteId}/checklist`, { text, is_completed });
+    const serverItem = response.data;
 
-    console.log(`✅ Checklist item created for note ${noteId}`);
+    console.log(`✅ Checklist item created for note ${noteId} with server ID ${serverItem.id}`);
+
+    // Update pending references in the queue for THIS checklist item
+    const currentQueue = await getSyncQueue();
+    let queueModified = false;
+
+    const updatedQueue = currentQueue.map(op => {
+        let opModified = false;
+        let newOp = { ...op };
+
+        // Update resourceId if it matches tempId (e.g. UPDATE_CHECKLIST, DELETE_CHECKLIST)
+        if (newOp.resourceId === tempId && (newOp.type === 'UPDATE_CHECKLIST' || newOp.type === 'DELETE_CHECKLIST')) {
+            newOp.resourceId = serverItem.id;
+            opModified = true;
+        }
+
+        // Checklist items might also be referenced in payload as itemId? 
+        // Based on offlineApi, they aren't, but let's be safe
+        if (newOp.payload && newOp.payload.itemId === tempId) {
+            newOp.payload = { ...newOp.payload, itemId: serverItem.id };
+            opModified = true;
+        }
+
+        if (opModified) queueModified = true;
+        return newOp;
+    });
+
+    if (queueModified) {
+        await setSyncQueue(updatedQueue);
+        console.log(`🔄 Updated pending checklist operations with real ID ${serverItem.id}`);
+    }
+
+    // Also update the cached note's checklist items list
+    const cached = await getCachedNoteById(noteId);
+    if (cached) {
+        const updatedChecklist = (cached.data.checklist_items || []).map((item: any) => {
+            if (item.id === tempId) {
+                return { ...item, id: serverItem.id };
+            }
+            return item;
+        });
+        await updateCachedNote(noteId, {
+            data: { ...cached.data, checklist_items: updatedChecklist }
+        });
+    }
 };
 
 const processChecklistUpdate = async (operation: QueuedOperation): Promise<void> => {
@@ -591,6 +649,26 @@ const processDrawingDelete = async (operation: QueuedOperation): Promise<void> =
         await api.delete(`/notes/drawings/${drawingId}`);
         console.log(`✅ Drawing ${drawingId} deleted`);
     }
+};
+
+const processPin = async (operation: QueuedOperation): Promise<void> => {
+    await api.put(`/notes/${operation.resourceId}/pin`);
+    console.log(`✅ Note ${operation.resourceId} pinned on server`);
+};
+
+const processUnpin = async (operation: QueuedOperation): Promise<void> => {
+    await api.put(`/notes/${operation.resourceId}/unpin`);
+    console.log(`✅ Note ${operation.resourceId} unpinned on server`);
+};
+
+const processArchive = async (operation: QueuedOperation): Promise<void> => {
+    await api.put(`/notes/${operation.resourceId}/archive`);
+    console.log(`✅ Note ${operation.resourceId} archived on server`);
+};
+
+const processUnarchive = async (operation: QueuedOperation): Promise<void> => {
+    await api.put(`/notes/${operation.resourceId}/unarchive`);
+    console.log(`✅ Note ${operation.resourceId} unarchived on server`);
 };
 
 // Manual retry with exponential backoff (not currently used, but available)

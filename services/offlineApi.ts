@@ -414,14 +414,16 @@ export const deleteDrawing = async (drawingId: number | string): Promise<void> =
 };
 
 // Checklist operations
-export const createChecklistItem = async (noteId: string | number, payload: { text: string; is_completed: boolean }): Promise<void> => {
+export const createChecklistItem = async (noteId: string | number, payload: { text: string; is_completed: boolean }, tempResourceId?: string | number): Promise<void> => {
+    const resourceId = tempResourceId || `temp_checklist_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+
     await enqueueOperation({
         type: 'CREATE_CHECKLIST',
         resourceType: 'checklist',
-        resourceId: noteId,
+        resourceId: resourceId,
         payload: { noteId, ...payload },
     });
-    console.log('✅ Checklist item queued for note:', noteId);
+    console.log('✅ Checklist item queued for note:', noteId, 'with temp ID:', resourceId);
 };
 
 export const updateChecklistItem = async (itemId: number | string, payload: { text: string; is_completed: boolean }): Promise<void> => {
@@ -449,4 +451,82 @@ export const deleteChecklistItem = async (itemId: number | string): Promise<void
         payload: { itemId },
     });
     console.log('🗑️ Checklist item delete queued:', itemId);
+};
+
+// Pin Operations
+export const pinNote = async (id: string | number): Promise<void> => {
+    // Update cache immediately
+    const cached = await getCachedNoteById(id);
+    if (cached) {
+        await updateCachedNote(id, {
+            data: { ...cached.data, is_pinned: true },
+            locallyModified: true,
+        });
+    }
+
+    await enqueueOperation({
+        type: 'PIN_NOTE',
+        resourceType: 'note',
+        resourceId: id,
+        payload: {},
+    });
+    console.log('📌 Note pinning queued:', id);
+};
+
+export const unpinNote = async (id: string | number): Promise<void> => {
+    // Update cache immediately
+    const cached = await getCachedNoteById(id);
+    if (cached) {
+        await updateCachedNote(id, {
+            data: { ...cached.data, is_pinned: false },
+            locallyModified: true,
+        });
+    }
+
+    await enqueueOperation({
+        type: 'UNPIN_NOTE',
+        resourceType: 'note',
+        resourceId: id,
+        payload: {},
+    });
+    console.log('📍 Note unpinning queued:', id);
+};
+
+// Archive Operations
+export const archiveNote = async (id: string | number): Promise<void> => {
+    // Update cache immediately
+    const cached = await getCachedNoteById(id);
+    if (cached) {
+        await updateCachedNote(id, {
+            data: { ...cached.data, is_archived: true },
+            locallyModified: true,
+        });
+    }
+
+    await enqueueOperation({
+        type: 'ARCHIVE_NOTE',
+        resourceType: 'note',
+        resourceId: id,
+        payload: {},
+    });
+    console.log('📦 Note archiving queued:', id);
+};
+
+export const unarchiveNote = async (id: string | number): Promise<void> => {
+    // Update cache immediately
+    const cached = await getCachedNoteById(id);
+    if (cached) {
+        await updateCachedNote(id, {
+            data: { ...cached.data, is_archived: false },
+            locallyModified: true,
+        });
+    }
+
+    await enqueueOperation({
+        type: 'UNARCHIVE_NOTE',
+        resourceType: 'note',
+        resourceId: id,
+        payload: {},
+    });
+    console.log('📤 Note unarchiving queued:', id);
 };

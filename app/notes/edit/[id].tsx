@@ -29,7 +29,8 @@ import * as ImagePicker from 'expo-image-picker';
 import AudioRecorder from '../../../components/AudioRecorder';
 import DrawingCanvas from '../../../components/DrawingCanvas';
 
-const COLORS = ['#FFFFFF', '#FECACA', '#FDE68A', '#A7F3D0', '#BFDBFE', '#DDD6FE', '#F5D0FE'];
+const LIGHT_COLORS = ['#FFFFFF', '#FECACA', '#FDE68A', '#A7F3D0', '#BFDBFE', '#DDD6FE', '#F5D0FE'];
+const DARK_COLORS = ['#1E293B', '#7F1D1D', '#78350F', '#064E3B', '#1E3A8A', '#4C1D95', '#701A75'];
 
 type ChecklistItem = {
     id: string | number;
@@ -68,7 +69,7 @@ export default function EditNote() {
     const [drawings, setDrawings] = useState<any[]>([]);
     const [deletedDrawingIds, setDeletedDrawingIds] = useState<number[]>([]);
     const [newDrawingUri, setNewDrawingUri] = useState<string | null>(null);
-    const { isDarkMode } = useTheme();
+    const { isDarkMode, colors } = useTheme();
     const { isOnline, triggerSync } = useNetwork();
     const { playAudio, isPlaying, currentUri } = useAudio();
     const router = useRouter();
@@ -335,7 +336,7 @@ export default function EditNote() {
                     return offlineApi.createChecklistItem(id as string | number, {
                         text: item.content,
                         is_completed: item.is_completed
-                    });
+                    }, item.id);
                 }
             }));
 
@@ -528,9 +529,9 @@ export default function EditNote() {
                     keyboardShouldPersistTaps="handled"
                 >
                     <TextInput
-                        style={[styles.titleInput, isDarkMode && styles.textDark]}
+                        style={[styles.titleInput, { color: colors.text }]}
                         placeholder="Title"
-                        placeholderTextColor={isDarkMode ? "#475569" : "#9CA3AF"}
+                        placeholderTextColor={colors.placeholder}
                         value={title}
                         onChangeText={setTitle}
                         maxLength={50}
@@ -565,9 +566,9 @@ export default function EditNote() {
                     )}
 
                     <TextInput
-                        style={[styles.contentInput, isDarkMode && styles.textDark]}
+                        style={[styles.contentInput, { color: colors.text }]}
                         placeholder="Start typing..."
-                        placeholderTextColor={isDarkMode ? "#475569" : "#9CA3AF"}
+                        placeholderTextColor={colors.placeholder}
                         value={content}
                         onChangeText={setContent}
                         multiline
@@ -831,7 +832,7 @@ export default function EditNote() {
                         <View style={styles.colorSection}>
                             <Text style={[styles.sectionLabel, isDarkMode && styles.sectionLabelDark]}>Theme</Text>
                             <View style={styles.colorList}>
-                                {COLORS.map((c) => (
+                                {(isDarkMode ? DARK_COLORS : LIGHT_COLORS).map((c: string) => (
                                     <TouchableOpacity
                                         key={c}
                                         style={[

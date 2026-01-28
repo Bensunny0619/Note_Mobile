@@ -84,6 +84,34 @@ export default function Trash() {
         );
     };
 
+    const handleClearTrash = () => {
+        if (notes.length === 0) return;
+        Alert.alert(
+            'Empty Trash',
+            'All notes in Trash will be permanently deleted. This action cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Empty Trash',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            setLoading(true);
+                            for (const note of notes) {
+                                await offlineApi.deleteNote(note.id);
+                            }
+                            fetchTrashedNotes();
+                        } catch (error) {
+                            Alert.alert('Error', 'Failed to empty trash');
+                        } finally {
+                            setLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     if (loading) {
         return (
             <SafeAreaView style={[styles.container, isDarkMode && styles.containerDark]}>
@@ -97,10 +125,19 @@ export default function Trash() {
     return (
         <SafeAreaView style={[styles.container, isDarkMode && styles.containerDark]}>
             <View style={styles.header}>
-                <Text style={[styles.headerTitle, isDarkMode && styles.textDark]}>Trash</Text>
-                <Text style={[styles.headerSubtitle, isDarkMode && styles.subtitleDark]}>
-                    {notes.length} {notes.length === 1 ? 'note' : 'notes'}
-                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View>
+                        <Text style={[styles.headerTitle, isDarkMode && styles.textDark]}>Trash</Text>
+                        <Text style={[styles.headerSubtitle, isDarkMode && styles.subtitleDark]}>
+                            {notes.length} {notes.length === 1 ? 'note' : 'notes'}
+                        </Text>
+                    </View>
+                    {notes.length > 0 && (
+                        <TouchableOpacity onPress={handleClearTrash} style={styles.emptyTrashButton}>
+                            <Text style={styles.emptyTrashText}>Empty Trash</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
             </View>
 
             {notes.length === 0 ? (
@@ -235,5 +272,16 @@ const styles = StyleSheet.create({
         color: '#EF4444',
         fontWeight: '600',
         fontSize: 14,
+    },
+    emptyTrashButton: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    },
+    emptyTrashText: {
+        color: '#EF4444',
+        fontWeight: '700',
+        fontSize: 13,
     },
 });

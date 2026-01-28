@@ -23,7 +23,7 @@ import api from '../../services/api';
 import * as offlineApi from '../../services/offlineApi';
 import { useNetwork } from '../../context/NetworkContext';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useLabels } from '../../context/LabelContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useAudio } from '../../context/AudioContext';
@@ -56,28 +56,50 @@ export default function NotesScreen() {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedLabelId, setSelectedLabelId] = useState<number | null>(null);
     const [selectedNote, setSelectedNote] = useState<Note | null>(null);
+    const [selectedNoteIds, setSelectedNoteIds] = useState<(string | number)[]>([]);
+    const [filterType, setFilterType] = useState<string | null>(null);
     const [isMenuVisible, setIsMenuVisible] = useState(false);
     const { labels: allLabels } = useLabels();
-    const { isDarkMode } = useTheme();
+    const { isDarkMode, colors } = useTheme();
     const { isOnline, pendingCount, triggerSync, lastSync } = useNetwork();
     const { playAudio, isPlaying, currentUri } = useAudio();
     const router = useRouter();
     const navigation = useNavigation();
+    const { label: filterLabel } = useLocalSearchParams();
 
     const fetchNotes = useCallback(async () => {
         try {
             console.log("--- FETCHING NOTES ---");
-            const fetchedNotes = await offlineApi.getNotes(searchQuery, selectedLabelId || undefined);
-            console.log(`📋 Fetched ${fetchedNotes.length} notes from cache/server`);
-            // console.log("First note:", fetchedNotes[0]);
-            setNotes(fetchedNotes);
+            const allNotes = await offlineApi.getNotes();
+
+            let filtered = allNotes;
+            if (searchQuery) {
+                const query = searchQuery.toLowerCase();
+                filtered = filtered.filter(note =>
+                    note.title?.toLowerCase().includes(query) ||
+                    note.content?.toLowerCase().includes(query)
+                );
+            }
+
+            // Apply drawer label filter if present
+            if (filterLabel) {
+                filtered = filtered.filter(note =>
+                    note.labels?.some((l: any) => l.name === filterLabel)
+                );
+            }
+
+            // Exclude archived and deleted notes from the main list unless explicitly filtered (not handled here)
+            const activeNotes = filtered.filter(note => !note.is_archived && !note.is_deleted);
+
+            console.log(`📋 Fetched ${activeNotes.length} notes from cache/server`);
+            setNotes(activeNotes);
         } catch (error) {
             console.error('Error fetching notes:', error);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [searchQuery, selectedLabelId]);
+    }, [searchQuery, filterLabel]);
 
     useEffect(() => {
         fetchNotes();
@@ -95,9 +117,23 @@ export default function NotesScreen() {
         fetchNotes();
     };
 
+    const toggleNoteSelection = (noteId: string | number) => {
+        setSelectedNoteIds(prev => {
+            if (prev.includes(noteId)) {
+                return prev.filter(id => id !== noteId);
+            } else {
+                return [...prev, noteId];
+            }
+        });
+    };
+
     const handleLongPress = (note: Note) => {
-        setSelectedNote(note);
-        setIsMenuVisible(true);
+        if (selectedNoteIds.length > 0) {
+            toggleNoteSelection(note.id);
+        } else {
+            setSelectedNote(note);
+            setIsMenuVisible(true);
+        }
     };
 
     const closeMenu = () => {
@@ -111,7 +147,12 @@ export default function NotesScreen() {
         const currentStatus = selectedNote.is_pinned;
         closeMenu();
         try {
-            await api.put(`/notes/${noteId}/${currentStatus ? 'unpin' : 'pin'}`);
+            if (currentStatus) {
+                await offlineApi.unpinNote(noteId);
+            } else {
+                await offlineApi.pinNote(noteId);
+            }
+            if (isOnline) triggerSync();
             fetchNotes();
         } catch (error) {
             Alert.alert('Error', 'Failed to update pin status');
@@ -124,7 +165,12 @@ export default function NotesScreen() {
         const currentStatus = selectedNote.is_archived;
         closeMenu();
         try {
-            await api.put(`/notes/${noteId}/${currentStatus ? 'unarchive' : 'archive'}`);
+            if (currentStatus) {
+                await offlineApi.unarchiveNote(noteId);
+            } else {
+                await offlineApi.archiveNote(noteId);
+            }
+            if (isOnline) triggerSync();
             fetchNotes();
         } catch (error) {
             Alert.alert('Error', 'Failed to update archive status');
@@ -188,18 +234,78 @@ export default function NotesScreen() {
         );
     };
 
-    const filteredNotes = notes.filter(note => {
+    const handleBatchDelete = () => {
+        if (selectedNoteIds.length === 0) return;
+        Alert.alert(
+            'Delete Notes',
+            `Are you sure you want to delete ${selectedNoteIds.length} notes?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            setLoading(true);
+                            for (const id of selectedNoteIds) {
+                                await offlineApi.deleteNote(id);
+                            }
+                            if (isOnline) triggerSync();
+                            setSelectedNoteIds([]);
+                            fetchNotes();
+                        } catch (error) {
+                            Alert.alert('Error', 'Failed to delete notes');
+                        } finally {
+                            setLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleBatchArchive = async () => {
+        if (selectedNoteIds.length === 0) return;
+        try {
+            setLoading(true);
+            for (const id of selectedNoteIds) {
+                await offlineApi.archiveNote(id);
+            }
+            if (isOnline) triggerSync();
+            setSelectedNoteIds([]);
+            fetchNotes();
+        } catch (error) {
+            Alert.alert('Error', 'Failed to archive notes');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const filteredNotes = (notes || []).filter(note => {
         const matchesSearch = (note.title?.toLowerCase().includes(searchQuery.toLowerCase())) ||
             (note.content?.toLowerCase().includes(searchQuery.toLowerCase()));
 
         const matchesLabel = selectedLabelId
-            ? note.labels?.some(l => l.id === selectedLabelId)
+            ? note.labels?.some((l: any) => l.id === selectedLabelId)
             : true;
 
-        return matchesSearch && matchesLabel;
+        let matchesType = true;
+        if (filterType === 'audio') {
+            matchesType = (note.audio_recordings?.length > 0) || !!(note as any).audio_uri;
+        } else if (filterType === 'drawing') {
+            matchesType = (note.drawings?.length > 0) || !!(note as any).drawing_uri;
+        } else if (filterType === 'image') {
+            matchesType = (note.images?.length > 0);
+        } else if (filterType === 'checklist') {
+            matchesType = (note.checklist_items?.length > 0);
+        }
+
+        return matchesSearch && matchesLabel && matchesType;
     });
 
     const renderNote = ({ item }: { item: any }) => {
+        const isSelected = selectedNoteIds.includes(item.id);
+
         // Merge images and drawings for preview
         const allVisuals = [
             ...(item.images || []).map((img: any) => ({ ...img, uri: img.image_url, type: 'image' })),
@@ -210,23 +316,30 @@ export default function NotesScreen() {
         if (item.drawing_uri) {
             allVisuals.push({ id: 'local-drawing', uri: item.drawing_uri, type: 'drawing' });
         }
-        if (item.audio_uri && (!item.audio_recordings || item.audio_recordings.length === 0)) {
-            // If we have a local audio URI and no server recordings yet, we might want to show it?
-            // But existing render logic handles audio separately in audioPreviewContainer
-            // We need to make sure audioPreviewContainer uses item.audio_uri if recordings are empty
-        }
 
         return (
             <TouchableOpacity
                 style={[
                     styles.noteCard,
                     { backgroundColor: item.color || (isDarkMode ? '#1e293b' : '#FFFFFF') },
-                    isDarkMode && styles.noteCardDark
+                    isDarkMode && styles.noteCardDark,
+                    isSelected && { borderColor: '#6366f1', borderWidth: 2 }
                 ]}
-                onPress={() => router.push(`/notes/edit/${item.id}` as any)}
-                onLongPress={() => handleLongPress(item)}
+                onPress={() => {
+                    if (selectedNoteIds.length > 0) {
+                        toggleNoteSelection(item.id);
+                    } else {
+                        router.push(`/notes/edit/${item.id}` as any);
+                    }
+                }}
+                onLongPress={() => toggleNoteSelection(item.id)}
                 activeOpacity={0.7}
             >
+                {isSelected && (
+                    <View style={styles.selectionOverlay}>
+                        <Feather name="check-circle" size={18} color={colors.primary} />
+                    </View>
+                )}
                 <View style={styles.noteHeaderRow}>
                     <Text style={[styles.noteTitle, isDarkMode && styles.textDark]} numberOfLines={2}>{item.title}</Text>
                     {item.is_pinned && <MaterialCommunityIcons name="pin" size={16} color="#6366f1" style={{ marginLeft: 8 }} />}
@@ -374,30 +487,61 @@ export default function NotesScreen() {
                 </View>
             )}
 
-            {/* Google Keep Style Header */}
+            {/* Selection Header or Search Header */}
             <View style={styles.headerContainer}>
-                <View style={[styles.floatingHeader, isDarkMode && styles.floatingHeaderDark]}>
-                    <TouchableOpacity onPress={() => navigation.dispatch(DrawerActions.openDrawer())} style={styles.menuButton}>
-                        <Feather name="menu" size={24} color={isDarkMode ? "#E2E8F0" : "#5F6368"} />
-                    </TouchableOpacity>
+                {selectedNoteIds.length > 0 ? (
+                    <View style={[styles.floatingHeader, { backgroundColor: colors.primary, borderColor: colors.primary }]}>
+                        <TouchableOpacity onPress={() => setSelectedNoteIds([])} style={styles.menuButton}>
+                            <Feather name="x" size={24} color="#FFFFFF" />
+                        </TouchableOpacity>
 
-                    <TextInput
-                        style={[styles.headerSearchInput, isDarkMode && styles.textDark]}
-                        placeholder="Search your notes"
-                        placeholderTextColor={isDarkMode ? "#94A3B8" : "#5F6368"}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                    />
+                        <Text style={{ flex: 1, fontSize: 20, fontWeight: '700', color: '#FFFFFF', marginLeft: 8 }}>
+                            {selectedNoteIds.length} selected
+                        </Text>
 
-                    <TouchableOpacity onPress={logout} style={styles.profileButton}>
-                        {/* Fallback to simple circle if no image */}
-                        <View style={[styles.profileAvatar, { backgroundColor: '#A5B4FC' }]}>
-                            <Text style={{ color: '#ffffff', fontWeight: 'bold' }}>
-                                {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
-                            </Text>
+                        <View style={{ flexDirection: 'row' }}>
+                            <TouchableOpacity onPress={handleBatchArchive} style={styles.toolbarAction}>
+                                <Feather name="archive" size={22} color="#FFFFFF" />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={handleBatchDelete} style={styles.toolbarAction}>
+                                <Feather name="trash-2" size={22} color="#FFFFFF" />
+                            </TouchableOpacity>
                         </View>
-                    </TouchableOpacity>
-                </View>
+                    </View>
+                ) : (
+                    <View style={[styles.floatingHeader, isDarkMode && styles.floatingHeaderDark]}>
+                        <TouchableOpacity onPress={() => navigation.dispatch(DrawerActions.openDrawer())} style={styles.menuButton}>
+                            <Feather name="menu" size={24} color={isDarkMode ? "#E2E8F0" : "#5F6368"} />
+                        </TouchableOpacity>
+
+                        {filterLabel ? (
+                            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8 }}>
+                                <Text style={[{ flex: 1, fontSize: 16, fontWeight: '600' }, isDarkMode ? styles.textDark : { color: '#1F2937' }]} numberOfLines={1}>
+                                    Label: {filterLabel}
+                                </Text>
+                                <TouchableOpacity onPress={() => router.setParams({ label: '' })}>
+                                    <Feather name="x" size={20} color={isDarkMode ? "#94A3B8" : "#5F6368"} />
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <TextInput
+                                style={[styles.headerSearchInput, isDarkMode && styles.textDark]}
+                                placeholder="Search your notes"
+                                placeholderTextColor={isDarkMode ? "#94A3B8" : "#5F6368"}
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                            />
+                        )}
+
+                        <TouchableOpacity onPress={logout} style={styles.profileButton}>
+                            <View style={[styles.profileAvatar, { backgroundColor: '#A5B4FC' }]}>
+                                <Text style={{ color: '#ffffff', fontWeight: 'bold' }}>
+                                    {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
+                    </View>
+                )}
             </View>
 
             {/* Label Filter Bar */}
@@ -541,13 +685,10 @@ export default function NotesScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#FBFBFF',
+        backgroundColor: '#FFFFFF',
     },
     containerDark: {
         backgroundColor: '#0f172a',
-    },
-    headerDark: {
-        borderBottomColor: 'rgba(255, 255, 255, 0.05)',
     },
     textDark: {
         color: '#f8fafc',
@@ -555,24 +696,20 @@ const styles = StyleSheet.create({
     textDarkSecondary: {
         color: '#94a3b8',
     },
-    searchBarDark: {
-        backgroundColor: 'rgba(30, 41, 59, 0.6)',
-        borderColor: 'rgba(255, 255, 255, 0.1)',
+    avatarDark: {
+        backgroundColor: '#1e293b',
+    },
+    noteCardDark: {
+        backgroundColor: '#1e293b',
+        borderColor: '#334155',
     },
     filterChipDark: {
         backgroundColor: '#1e293b',
         borderColor: '#334155',
     },
     filterChipActiveDark: {
-        backgroundColor: '#6366f1',
-        borderColor: '#6366f1',
-    },
-    noteCardDark: {
-        backgroundColor: '#1e293b',
-        borderColor: '#334155',
-    },
-    avatarDark: {
-        backgroundColor: '#1e293b',
+        backgroundColor: '#312e81',
+        borderColor: '#4338ca',
     },
     avatarTextDark: {
         color: '#818cf8',
@@ -607,17 +744,15 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.18,
-        shadowRadius: 1.0,
-        elevation: 2,
+        shadowOpacity: 0.15,
+        shadowRadius: 2,
+        elevation: 3,
         borderWidth: 1,
-        borderColor: '#E0E0E0',
+        borderColor: '#E2E8F0',
     },
     floatingHeaderDark: {
-        backgroundColor: '#1E293B', // Slate 800
-        borderColor: 'transparent',
-        shadowColor: '#000',
-        shadowOpacity: 0.3,
+        backgroundColor: '#1e293b',
+        borderColor: '#334155',
     },
     menuButton: {
         padding: 8,
@@ -765,28 +900,27 @@ const styles = StyleSheet.create({
         alignItems: 'center', // Standardize alignment
     },
     filterChip: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 8,
-        backgroundColor: 'transparent',
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 12,
+        backgroundColor: '#F3F4F6',
         marginRight: 8,
         borderWidth: 1,
         borderColor: '#E5E7EB',
-        height: 36, // Explicit small height
+        height: 38,
         justifyContent: 'center',
     },
     filterChipActive: {
-        backgroundColor: '#E8F0FE',
-        borderColor: '#E8F0FE',
+        backgroundColor: '#EEF2FF',
+        borderColor: '#C7D2FE',
     },
     filterChipText: {
-        fontSize: 13,
+        fontSize: 14,
         fontWeight: '500',
-        color: '#5f6368',
-        lineHeight: 18, // Restrict line height
+        color: '#4B5563',
     },
     filterChipTextActive: {
-        color: '#1967d2', // Google Blue
+        color: '#6366f1',
         fontWeight: '600',
     },
     labelPreviewContainer: {
@@ -982,5 +1116,22 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '600',
         color: '#6366f1',
+    },
+    selectionOverlay: {
+        position: 'absolute',
+        top: -10,
+        right: -10,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        zIndex: 10,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+        elevation: 5,
+    },
+    toolbarAction: {
+        padding: 8,
+        marginLeft: 4,
     },
 });
