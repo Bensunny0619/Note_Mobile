@@ -15,11 +15,12 @@ import {
     updateCachedNote,
     removeCachedNote,
     getCachedNoteById,
-    enqueueOperation,
     CachedNote,
     getSyncQueue,
     setSyncQueue,
+    enqueueOperation,
 } from './storage';
+import * as notificationService from './notificationService';
 
 let isOnlineGlobal = true;
 
@@ -248,6 +249,7 @@ export const deleteNote = async (id: string | number): Promise<void> => {
 export const permanentlyDeleteNote = async (id: string | number): Promise<void> => {
     // Remove from cache immediately
     await removeCachedNote(id);
+    await notificationService.cancelNoteReminder(id);
 
     console.log('💣 Note deleted permanently from cache:', id);
 

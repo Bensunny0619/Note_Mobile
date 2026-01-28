@@ -28,6 +28,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
 import AudioRecorder from '../../../components/AudioRecorder';
 import DrawingCanvas from '../../../components/DrawingCanvas';
+import * as notificationService from '../../../services/notificationService';
 
 const LIGHT_COLORS = ['#FFFFFF', '#FECACA', '#FDE68A', '#A7F3D0', '#BFDBFE', '#DDD6FE', '#F5D0FE'];
 const DARK_COLORS = ['#1E293B', '#7F1D1D', '#78350F', '#064E3B', '#1E3A8A', '#4C1D95', '#701A75'];
@@ -289,7 +290,17 @@ export default function EditNote() {
             }
 
             // 2. Local Notifications Logic
-            // Disabled for now
+            if (reminderDate) {
+                await notificationService.scheduleNoteReminder(
+                    id as string | number,
+                    title,
+                    content,
+                    reminderDate
+                );
+            } else if (reminderId === null) {
+                // If reminder was removed
+                await notificationService.cancelNoteReminder(id as string | number);
+            }
 
             // 2. Handle Labels (Add new ones, Remove old ones)
             const labelsToAdd = selectedLabelIds.filter(lid => !initialLabelIds.includes(lid));

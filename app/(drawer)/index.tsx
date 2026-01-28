@@ -26,6 +26,7 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useLabels } from '../../context/LabelContext';
 import { useTheme } from '../../context/ThemeContext';
+import * as notificationService from '../../services/notificationService';
 import { useAudio } from '../../context/AudioContext';
 import CreationFab from '../../components/CreationFab';
 
@@ -223,6 +224,7 @@ export default function NotesScreen() {
                     onPress: async () => {
                         try {
                             await offlineApi.deleteNote(noteId);
+                            await notificationService.cancelNoteReminder(noteId);
                             if (isOnline) triggerSync();
                             fetchNotes();
                         } catch (error) {
@@ -249,6 +251,7 @@ export default function NotesScreen() {
                             setLoading(true);
                             for (const id of selectedNoteIds) {
                                 await offlineApi.deleteNote(id);
+                                await notificationService.cancelNoteReminder(id);
                             }
                             if (isOnline) triggerSync();
                             setSelectedNoteIds([]);
