@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useAudio } from '../context/AudioContext';
 import { useTheme } from '../context/ThemeContext';
@@ -113,11 +113,18 @@ const styles = StyleSheet.create({
         right: 10,
         backgroundColor: '#FFFFFF',
         borderRadius: 12,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 12,
         elevation: 8,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.15,
+                shadowRadius: 12,
+            },
+            web: {
+                boxShadow: '0px 4px 12px rgba(0, 0, 0, 0.15)',
+            }
+        }),
         overflow: 'hidden',
         borderWidth: 1,
         borderColor: '#F3F4F6',

@@ -15,7 +15,8 @@ import {
     Modal,
     TouchableWithoutFeedback,
     ScrollView,
-    Image as NoteImage
+    Image as NoteImage,
+    Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
@@ -797,11 +798,18 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         height: 52,
         paddingHorizontal: 12,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.15,
-        shadowRadius: 2,
         elevation: 3,
+        ...Platform.select({
+            ios: {
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.15,
+                shadowRadius: 2,
+            },
+            web: {
+                boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.15)',
+            }
+        }),
         borderWidth: 1,
         borderColor: '#E2E8F0',
     },
@@ -1086,10 +1094,17 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         elevation: 10,
-        shadowColor: '#6366f1',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.4,
-        shadowRadius: 16,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#6366f1',
+                shadowOffset: { width: 0, height: 6 },
+                shadowOpacity: 0.4,
+                shadowRadius: 16,
+            },
+            web: {
+                boxShadow: '0px 6px 16px rgba(99, 102, 241, 0.4)',
+            }
+        }),
     },
     // Modal & Menu Styles
     modalOverlay: {
@@ -1179,11 +1194,18 @@ const styles = StyleSheet.create({
         backgroundColor: '#FFFFFF',
         borderRadius: 12,
         zIndex: 10,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
         elevation: 5,
+        ...Platform.select({
+            ios: {
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.25,
+                shadowRadius: 3.84,
+            },
+            web: {
+                boxShadow: '0px 2px 3.84px rgba(0, 0, 0, 0.25)',
+            }
+        }),
     },
     toolbarAction: {
         padding: 8,

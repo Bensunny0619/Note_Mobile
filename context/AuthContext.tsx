@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import * as SecureStore from 'expo-secure-store';
+import authStorage from '../services/authStorage';
 import api from '../services/api';
 import { router } from 'expo-router';
 
@@ -38,8 +38,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     const checkLoginStatus = async () => {
         try {
-            const token = await SecureStore.getItemAsync('auth_token');
-            const userData = await SecureStore.getItemAsync('user_data');
+            const token = await authStorage.getItem('auth_token');
+            const userData = await authStorage.getItem('user_data');
 
             if (token && userData) {
                 setToken(token);
@@ -53,8 +53,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                     if (error.response?.status === 401) {
                         console.log('❌ Token invalid, clearing auth state');
                         // Token is invalid, clear everything
-                        await SecureStore.deleteItemAsync('auth_token');
-                        await SecureStore.deleteItemAsync('user_data');
+                        await authStorage.deleteItem('auth_token');
+                        await authStorage.deleteItem('user_data');
                         setToken(null);
                         setUser(null);
                     }
@@ -74,8 +74,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                 throw new Error('Authentication failed: Missing token');
             }
 
-            await SecureStore.setItemAsync('auth_token', token);
-            await SecureStore.setItemAsync('user_data', JSON.stringify(newUser));
+            await authStorage.setItem('auth_token', token);
+            await authStorage.setItem('user_data', JSON.stringify(newUser));
             setToken(token);
             setUser(newUser);
 
@@ -100,8 +100,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                 console.log('Backend logout failed, clearing local data anyway');
             }
 
-            await SecureStore.deleteItemAsync('auth_token');
-            await SecureStore.deleteItemAsync('user_data');
+            await authStorage.deleteItem('auth_token');
+            await authStorage.deleteItem('user_data');
             setToken(null);
             setUser(null);
 

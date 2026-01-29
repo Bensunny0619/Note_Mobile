@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useColorScheme as useNativeWindColorScheme } from 'nativewind';
-import * as SecureStore from 'expo-secure-store';
+import authStorage from '../services/authStorage';
 
 type ThemeColors = {
     primary: string;
@@ -58,7 +58,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         async function loadTheme() {
-            const savedTheme = await SecureStore.getItemAsync('theme_preference');
+            const savedTheme = await authStorage.getItem('theme_preference');
             if (savedTheme) {
                 const isDark = savedTheme === 'dark';
                 setIsDarkMode(isDark);
@@ -74,7 +74,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         const newTheme = !isDarkMode ? 'dark' : 'light';
         setIsDarkMode(!isDarkMode);
         setColorScheme(newTheme);
-        await SecureStore.setItemAsync('theme_preference', newTheme);
+        await authStorage.setItem('theme_preference', newTheme);
     };
 
     const colors = isDarkMode ? DarkTheme : LightTheme;

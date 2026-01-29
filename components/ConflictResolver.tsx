@@ -6,7 +6,8 @@ import {
     TouchableOpacity,
     ScrollView,
     StyleSheet,
-    Dimensions
+    Dimensions,
+    Platform
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
@@ -145,10 +146,17 @@ const styles = StyleSheet.create({
         maxHeight: '80%',
         width: '100%',
         elevation: 5,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 12,
+        ...Platform.select({
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.1,
+                shadowRadius: 12,
+            },
+            web: {
+                boxShadow: '0px 4px 12px rgba(0, 0, 0, 0.1)',
+            }
+        }),
     },
     modalContentDark: {
         backgroundColor: '#1E293B',

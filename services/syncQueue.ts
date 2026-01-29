@@ -10,6 +10,7 @@ import {
     removeCachedNote,
     setLastSyncTime,
 } from './storage';
+import authStorage from './authStorage';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [1000, 3000, 10000]; // Exponential backoff
@@ -307,8 +308,7 @@ const processAudioCreate = async (operation: QueuedOperation): Promise<void> => 
         type: audioFile.type,
     } as any);
 
-    // Use fetch instead of axios for proper FormData handling in React Native
-    const token = await import('expo-secure-store').then(m => m.getItemAsync('auth_token'));
+    const token = await authStorage.getItem('auth_token');
     const response = await fetch(`${api.defaults.baseURL}/notes/${noteId}/audio`, {
         method: 'POST',
         headers: {
@@ -356,7 +356,7 @@ const processDrawingCreate = async (operation: QueuedOperation): Promise<void> =
         const filename = drawing_uri.split('/').pop() || 'drawing.png';
 
         // Use fetch instead of axios for proper FormData handling in React Native
-        const token = await import('expo-secure-store').then(m => m.getItemAsync('auth_token'));
+        const token = await authStorage.getItem('auth_token');
 
         console.log(`🔍 Drawing upload details:`, {
             url: `${api.defaults.baseURL}/notes/${noteId}/drawings`,
@@ -515,8 +515,7 @@ const processImageUpload = async (operation: QueuedOperation): Promise<void> => 
         type: imageFile.type,
     } as any);
 
-    // Use fetch instead of axios for proper FormData handling in React Native
-    const token = await import('expo-secure-store').then(m => m.getItemAsync('auth_token'));
+    const token = await authStorage.getItem('auth_token');
     const response = await fetch(`${api.defaults.baseURL}/notes/${noteId}/images`, {
         method: 'POST',
         headers: {

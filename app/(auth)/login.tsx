@@ -59,6 +59,12 @@ export default function Login() {
                     <View style={styles.logoDot} />
                 </View>
                 <Text style={styles.tagline}>The home of your notes</Text>
+
+                {__DEV__ && (
+                    <View style={{ marginTop: 10, padding: 8, backgroundColor: '#F3F4F6', borderRadius: 4 }}>
+                        <Text style={{ fontSize: 10, color: '#6B7280' }}>DEBUG: {api.defaults.baseURL}</Text>
+                    </View>
+                )}
             </View>
 
             <View style={styles.formContainer}>

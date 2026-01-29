@@ -9,17 +9,7 @@ import { useAuth } from "../context/AuthContext";
 import { useEffect } from "react";
 import { useRouter, useSegments } from "expo-router";
 import { View, ActivityIndicator, Platform } from "react-native";
-import * as Notifications from 'expo-notifications';
-
-// Configure how notifications are handled when the app is open
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+import NotificationHandler from "../components/NotificationHandler";
 
 // Separate component to handle protection logic since it needs to be inside AuthProvider
 function RootLayoutNav() {
@@ -28,26 +18,6 @@ function RootLayoutNav() {
   const router = useRouter();
 
   useEffect(() => {
-    // Request notification permissions
-    async function requestPermissions() {
-      const { status } = await Notifications.getPermissionsAsync();
-      if (status !== 'granted') {
-        const { status: finalStatus } = await Notifications.requestPermissionsAsync();
-        if (finalStatus !== 'granted') return;
-      }
-
-      if (Platform.OS === 'android') {
-        Notifications.setNotificationChannelAsync('default', {
-          name: 'default',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FF231F7C',
-        });
-      }
-    }
-
-    requestPermissions();
-
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
@@ -93,6 +63,7 @@ export default function RootLayout() {
             <LabelProvider>
               <AudioProvider>
                 <View style={{ flex: 1 }}>
+                  <NotificationHandler />
                   <RootLayoutNav />
                   <MiniAudioPlayer />
                 </View>

@@ -1,6 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { Audio } from 'expo-av';
-import { Alert } from 'react-native';
+import React, { createContext, useContext, useState } from 'react';
 
 type AudioMetadata = {
     noteId: string | number;
@@ -24,7 +22,6 @@ type AudioContextType = {
 const AudioContext = createContext<AudioContextType | undefined>(undefined);
 
 export function AudioProvider({ children }: { children: React.ReactNode }) {
-    const [sound, setSound] = useState<Audio.Sound | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentUri, setCurrentUri] = useState<string | null>(null);
     const [metadata, setMetadata] = useState<AudioMetadata | null>(null);
@@ -32,110 +29,24 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     const [duration, setDuration] = useState(0);
     const [isLoading, setIsLoading] = useState(false);
 
-    // Clean up sound on unmount
-    useEffect(() => {
-        return () => {
-            if (sound) {
-                sound.unloadAsync();
-            }
-        };
-    }, [sound]);
-
-    // Setup audio session
-    useEffect(() => {
-        async function setupAudio() {
-            try {
-                await Audio.setAudioModeAsync({
-                    allowsRecordingIOS: false,
-                    playsInSilentModeIOS: true,
-                    staysActiveInBackground: true, // Crucial for persistent playback
-                    shouldDuckAndroid: true,
-                    playThroughEarpieceAndroid: false,
-                });
-            } catch (error) {
-                console.error('Failed to setup audio mode', error);
-            }
-        }
-        setupAudio();
-    }, []);
-
-    const onPlaybackStatusUpdate = (status: any) => {
-        if (status.isLoaded) {
-            setPosition(status.positionMillis);
-            setDuration(status.durationMillis || 0);
-            setIsPlaying(status.isPlaying);
-
-            if (status.didJustFinish) {
-                setIsPlaying(false);
-                setPosition(0);
-                sound?.setPositionAsync(0);
-                sound?.pauseAsync(); // Stop at end
-            }
-        }
-    };
-
     const playAudio = async (uri: string, meta: AudioMetadata) => {
-        try {
-            setIsLoading(true);
-
-            // If same URI, toggle play/pause
-            if (currentUri === uri && sound) {
-                if (isPlaying) {
-                    await sound.pauseAsync();
-                } else {
-                    await sound.playAsync();
-                }
-                setIsLoading(false);
-                return;
-            }
-
-            // Unload existing sound
-            if (sound) {
-                await sound.unloadAsync();
-                setSound(null);
-            }
-
-            // Load new sound
-            const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri },
-                { shouldPlay: true },
-                onPlaybackStatusUpdate
-            );
-
-            setSound(newSound);
-            setCurrentUri(uri);
-            setMetadata(meta);
-            setIsLoading(false);
-        } catch (error) {
-            console.error('Error playing audio', error);
-            Alert.alert('Error', 'Could not play audio');
-            setIsLoading(false);
-        }
+        console.log('🔇 Audio playback is currently mocked on web to silence expo-av warnings.');
+        setCurrentUri(uri);
+        setMetadata(meta);
     };
 
     const pauseAudio = async () => {
-        if (sound) {
-            await sound.pauseAsync();
-        }
+        setIsPlaying(false);
     };
 
     const resumeAudio = async () => {
-        if (sound) {
-            await sound.playAsync();
-        }
+        setIsPlaying(true);
     };
 
     const stopAudio = async () => {
-        if (sound) {
-            await sound.stopAsync();
-            await sound.unloadAsync();
-            setSound(null);
-            setCurrentUri(null);
-            setMetadata(null);
-            setIsPlaying(false);
-            setPosition(0);
-            setDuration(0);
-        }
+        setCurrentUri(null);
+        setMetadata(null);
+        setIsPlaying(false);
     };
 
     const value = {
