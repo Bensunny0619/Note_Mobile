@@ -1,50 +1,78 @@
-# Welcome to your Expo app 👋
+# NoteApp - High-Performance Offline-First Note Taking
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+![Expo](https://img.shields.io/badge/Expo-000020?style=for-the-badge&logo=expo&logoColor=white)
+![React Native](https://img.shields.io/badge/React_Native-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
+![Laravel](https://img.shields.io/badge/Laravel-FF2D20?style=for-the-badge&logo=laravel&logoColor=white)
 
-## Get started
+NoteApp is a sophisticated, professional-grade note-taking application built with **React Native (Expo)**. It features a robust offline-first architecture, real-time synchronization, and a rich multimedia experience including digital ink drawings and voice recordings.
 
-1. Install dependencies
+## 🚀 Key Features
 
-   ```bash
-   npm install
-   ```
+-   **📡 Offline-First Architecture**: Work seamlessly without internet. Changes are queued and automatically synced when connectivity returns.
+-   **🔄 Real-Time Sync**: Instant cross-device synchronization powered by Laravel Echo and WebSockets.
+-   **🎨 Digital Ink Drawing**: High-performance freehand drawing powered by `@shopify/react-native-skia`.
+-   **🎙️ Voice Memos**: Integrated audio recording and global playback controls.
+-   **🏷️ Smart Organization**: Categorize notes with a dynamic label system, archive, and trash functionality.
+-   **🌓 Dark & Light Mode**: A beautifully crafted UI that respects system preferences or user choice.
+-   **🏗️ Conflict Resolution**: Built-in UI to handle data conflicts between local and remote state.
 
-2. Start the app
+## 🛠️ Tech Stack
 
-   ```bash
-   npx expo start
-   ```
+-   **Frontend**: React Native, Expo, Expo Router (File-based routing)
+-   **Styling**: NativeWind (Tailwind CSS for Native)
+-   **State Management**: React Context API (Modular Providers)
+-   **Database/Storage**: AsyncStorage (Notes/Metadata), SecureStore (Auth Tokens)
+-   **Graphics**: React Native Skia
+-   **Networking**: Axios, Laravel Echo, Pusher-js
+-   **Real-time**: Laravel Reverb / Pusher
 
-In the output, you'll find options to open the app in a
+## 📂 Project Structure
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```text
+├── app/                  # Expo Router file-based navigation
+│   ├── (auth)            # Authentication flow (Login/Register)
+│   ├── (drawer)          # Main application drawer screens
+│   └── notes/            # Individual note creation and editing
+├── components/           # Atomic and compound UI components
+│   ├── DrawingCanvas     # Skia-based high-performance drawing
+│   ├── AudioRecorder     # Native audio recording interface
+│   └── NoteCard          # Rich-preview note items
+├── context/              # Global state providers (Auth, Theme, Audio, etc.)
+├── services/             # Core business logic and infrastructure
+│   ├── syncQueue.ts      # Offline synchronization engine
+│   ├── offlineApi.ts     # Data access layer with offline support
+│   └── echo.ts           # WebSocket/Real-time configuration
+└── assets/               # Static resources and branding
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## ⚙️ Getting Started
 
-## Learn more
+### Prerequisites
+-   Node.js (LTS)
+-   Expo Go on your mobile device (for testing)
+-   A running Laravel backend (NoteApp Backend)
 
-To learn more about developing your project with Expo, look at the following resources:
+### Installation
+1.  Clone the repository
+2.  Install dependencies:
+    ```bash
+    npm install
+    ```
+3.  Configure your environment in `services/config.ts`:
+    ```typescript
+    const DEV_IP = 'YOUR_LOCAL_IP'; // Set your backend IP
+    ```
+4.  Launch the application:
+    ```bash
+    npx expo start
+    ```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## 🔒 Security & Privacy
+Notes are stored locally on the device. Authentication is handled via secure JWT tokens stored in `Expo SecureStore`, ensuring your data remains private and accessible only to you.
 
-## Join the community
+---
 
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## 👨‍💻 Developer
+Built with ❤️ by **Gbenga Odudare Emmanuel**. Optimized for performance and user experience.
